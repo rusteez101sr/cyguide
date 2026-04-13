@@ -2,8 +2,7 @@
 
 create table if not exists public.profiles (
   id uuid references auth.users on delete cascade primary key,
-  canvas_token text,
-  canvas_url text default 'https://canvas.iastate.edu',
+  canvas_ical_url text,
   major text,
   year text,
   created_at timestamptz default now()

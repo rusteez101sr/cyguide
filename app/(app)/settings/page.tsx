@@ -4,8 +4,7 @@ import { useState, useEffect, FormEvent } from "react";
 import { createClient } from "@/lib/supabase";
 
 interface Profile {
-  canvas_token: string;
-  canvas_url: string;
+  canvas_ical_url: string;
   major: string;
   year: string;
 }
@@ -15,8 +14,7 @@ const YEAR_OPTIONS = ["Freshman", "Sophomore", "Junior", "Senior", "Graduate"];
 export default function SettingsPage() {
   const supabase = createClient();
   const [profile, setProfile] = useState<Profile>({
-    canvas_token: "",
-    canvas_url: "https://canvas.iastate.edu",
+    canvas_ical_url: "",
     major: "",
     year: "",
   });
@@ -29,17 +27,14 @@ export default function SettingsPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-
       const { data } = await supabase
         .from("profiles")
-        .select("canvas_token, canvas_url, major, year")
+        .select("canvas_ical_url, major, year")
         .eq("id", user.id)
         .single();
-
       if (data) {
         setProfile({
-          canvas_token: data.canvas_token ?? "",
-          canvas_url: data.canvas_url ?? "https://canvas.iastate.edu",
+          canvas_ical_url: data.canvas_ical_url ?? "",
           major: data.major ?? "",
           year: data.year ?? "",
         });
@@ -60,14 +55,12 @@ export default function SettingsPage() {
 
     const { error } = await supabase.from("profiles").upsert({
       id: user.id,
-      canvas_token: profile.canvas_token,
-      canvas_url: profile.canvas_url || "https://canvas.iastate.edu",
+      canvas_ical_url: profile.canvas_ical_url,
       major: profile.major,
       year: profile.year,
     });
 
     setSaving(false);
-
     if (error) {
       setError(error.message);
     } else {
@@ -94,69 +87,50 @@ export default function SettingsPage() {
       </div>
 
       <form onSubmit={save} className="flex flex-col gap-6">
-        {/* Canvas section */}
+        {/* Canvas iCal section */}
         <div className="bg-white rounded-2xl border border-gray-100 p-5">
-          <h2 className="text-sm font-semibold text-gray-900 mb-1">Canvas Integration</h2>
-          <p className="text-xs text-gray-400 mb-4">
-            Get your API token from Canvas → Account → Settings → Approved Integrations → New Access Token.
+          <h2 className="text-sm font-semibold text-gray-900 mb-1">Canvas Calendar</h2>
+          <p className="text-xs text-gray-400 mb-1">
+            How to get your Canvas calendar feed URL:
           </p>
-
-          <div className="flex flex-col gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                Canvas URL
-              </label>
-              <input
-                type="url"
-                value={profile.canvas_url}
-                onChange={(e) => setProfile({ ...profile, canvas_url: e.target.value })}
-                className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
-                placeholder="https://canvas.iastate.edu"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                Canvas API Token
-              </label>
-              <input
-                type="password"
-                value={profile.canvas_token}
-                onChange={(e) => setProfile({ ...profile, canvas_token: e.target.value })}
-                className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors font-mono"
-                placeholder="Paste your token here"
-              />
-            </div>
-          </div>
+          <ol className="text-xs text-gray-400 list-decimal list-inside mb-4 space-y-0.5">
+            <li>Go to <span className="font-medium text-gray-600">canvas.iastate.edu</span></li>
+            <li>Click <span className="font-medium text-gray-600">Calendar</span> in the left sidebar</li>
+            <li>Click <span className="font-medium text-gray-600">Calendar Feed</span> at the bottom right</li>
+            <li>Copy the URL and paste it below</li>
+          </ol>
+          <input
+            type="url"
+            value={profile.canvas_ical_url}
+            onChange={(e) => setProfile({ ...profile, canvas_ical_url: e.target.value })}
+            className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
+            placeholder="https://canvas.iastate.edu/feeds/calendars/user_xxxx.ics"
+          />
         </div>
 
         {/* Profile section */}
         <div className="bg-white rounded-2xl border border-gray-100 p-5">
           <h2 className="text-sm font-semibold text-gray-900 mb-1">Student Profile</h2>
           <p className="text-xs text-gray-400 mb-4">
-            Used to personalize CyGuide&apos;s responses to your situation.
+            Used to personalize CyGuide&apos;s responses.
           </p>
-
           <div className="flex flex-col gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                Major
-              </label>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Major</label>
               <input
                 type="text"
                 value={profile.major}
                 onChange={(e) => setProfile({ ...profile, major: e.target.value })}
-                className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
+                className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
                 placeholder="e.g. Computer Science"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                Year
-              </label>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Year</label>
               <select
                 value={profile.year}
                 onChange={(e) => setProfile({ ...profile, year: e.target.value })}
-                className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors bg-white"
+                className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
               >
                 <option value="">Select year</option>
                 {YEAR_OPTIONS.map((y) => (
@@ -172,7 +146,7 @@ export default function SettingsPage() {
         <button
           type="submit"
           disabled={saving}
-          className="w-full py-3 rounded-xl text-white text-sm font-medium transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
+          className="w-full py-3 rounded-xl text-white text-sm font-medium transition-opacity disabled:opacity-50"
           style={{ backgroundColor: "#C8102E" }}
         >
           {saving ? "Saving…" : saved ? "Saved!" : "Save settings"}
