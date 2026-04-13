@@ -1,4 +1,4 @@
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 
 type Intent = "policy" | "planning" | "tutor";
 
@@ -14,16 +14,17 @@ interface StudentProfile {
   [key: string]: string | undefined;
 }
 
-interface OpenRouterResponse {
+interface ChatResponse {
   reply: string;
   model: string;
   intent: Intent;
 }
 
+// All GPT models — gpt-4o for accuracy-critical intents, gpt-4o-mini for tutoring
 const MODEL_MAP: Record<Intent, string> = {
-  policy: "anthropic/claude-opus-4-6",
-  planning: "openai/gpt-4o",
-  tutor: "google/gemini-pro",
+  policy: "gpt-4o",
+  planning: "gpt-4o",
+  tutor: "gpt-4o-mini",
 };
 
 const CLASSIFIER_SYSTEM_PROMPT = `You are an intent classifier for CyGuide, an AI assistant for Iowa State University students.
@@ -39,16 +40,14 @@ async function classifyIntent(
   message: string,
   apiKey: string
 ): Promise<Intent> {
-  const response = await fetch(OPENROUTER_API_URL, {
+  const response = await fetch(OPENAI_API_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
-      "HTTP-Referer": "https://cyguide.iastate.edu",
-      "X-Title": "CyGuide",
     },
     body: JSON.stringify({
-      model: "openai/gpt-4o-mini",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: CLASSIFIER_SYSTEM_PROMPT },
         { role: "user", content: message },
@@ -60,7 +59,7 @@ async function classifyIntent(
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`OpenRouter classification failed: ${error}`);
+    throw new Error(`Classification failed: ${error}`);
   }
 
   const data = await response.json();
@@ -70,7 +69,6 @@ async function classifyIntent(
     return raw;
   }
 
-  // Default to tutor if classifier returns unexpected output
   return "tutor";
 }
 
@@ -98,10 +96,10 @@ export async function chat(
   message: string,
   history: Message[],
   profile: StudentProfile = {}
-): Promise<OpenRouterResponse> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+): Promise<ChatResponse> {
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY environment variable is not set");
+    throw new Error("OPENAI_API_KEY environment variable is not set");
   }
 
   const intent = await classifyIntent(message, apiKey);
@@ -114,13 +112,11 @@ export async function chat(
     { role: "user", content: message },
   ];
 
-  const response = await fetch(OPENROUTER_API_URL, {
+  const response = await fetch(OPENAI_API_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
-      "HTTP-Referer": "https://cyguide.iastate.edu",
-      "X-Title": "CyGuide",
     },
     body: JSON.stringify({
       model,
@@ -132,7 +128,7 @@ export async function chat(
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`OpenRouter chat failed (${model}): ${error}`);
+    throw new Error(`OpenAI chat failed (${model}): ${error}`);
   }
 
   const data = await response.json();
