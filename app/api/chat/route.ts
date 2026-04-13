@@ -1,10 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { chat } from "@/lib/openrouter";
+import { createClient } from "@/lib/supabase-server";
+import { parseIcal, getUpcoming, formatAssignmentsForPrompt } from "@/lib/ical";
 
 interface ChatRequestBody {
   message: string;
   history?: Array<{ role: "user" | "assistant" | "system"; content: string }>;
   profile?: Record<string, string>;
+}
+
+async function getCalendarContext(userId: string): Promise<string> {
+  try {
+    const supabase = await createClient();
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("canvas_ical_url, major, year")
+      .eq("id", userId)
+      .single();
+
+    if (!profile?.canvas_ical_url) return "";
+
+    const res = await fetch(profile.canvas_ical_url, { next: { revalidate: 300 } });
+    if (!res.ok) return "";
+
+    const text = await res.text();
+    const all = parseIcal(text);
+    const upcoming = getUpcoming(all);
+    return formatAssignmentsForPrompt(upcoming);
+  } catch {
+    return "";
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -13,10 +38,7 @@ export async function POST(req: NextRequest) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON in request body" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
   }
 
   const { message, history = [], profile = {} } = body;
@@ -28,13 +50,24 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Get the authenticated user to fetch their calendar
+  let calendarContext = "";
   try {
-    const result = await chat(message.trim(), history, profile);
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      calendarContext = await getCalendarContext(user.id);
+    }
+  } catch {
+    // If auth fails, proceed without calendar context
+  }
+
+  try {
+    const result = await chat(message.trim(), history, profile, calendarContext);
     return NextResponse.json(result);
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "An unexpected error occurred";
-    console.error("[/api/chat]", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    const errMsg = err instanceof Error ? err.message : "An unexpected error occurred";
+    console.error("[/api/chat]", errMsg);
+    return NextResponse.json({ error: errMsg }, { status: 500 });
   }
 }

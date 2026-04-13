@@ -72,7 +72,7 @@ async function classifyIntent(
   return "tutor";
 }
 
-function buildSystemPrompt(intent: Intent, profile: StudentProfile): string {
+function buildSystemPrompt(intent: Intent, profile: StudentProfile, calendarContext: string): string {
   const profileContext = Object.entries(profile)
     .filter(([, v]) => v)
     .map(([k, v]) => `${k}: ${v}`)
@@ -82,20 +82,25 @@ function buildSystemPrompt(intent: Intent, profile: StudentProfile): string {
     profileContext ? ` Student profile: ${profileContext}.` : ""
   }`;
 
+  const calendarSection = calendarContext
+    ? `\n\nThe student's upcoming Canvas assignments (next 30 days):\n${calendarContext}\n\nWhen the student asks about assignments, due dates, or what they need to work on, refer to this list to give accurate, specific answers.`
+    : "";
+
   switch (intent) {
     case "policy":
-      return `${base} You specialize in ISU academic policies, rules, graduation requirements, financial aid, and administrative procedures. Be precise and cite specific ISU policies when possible.`;
+      return `${base} You specialize in ISU academic policies, rules, graduation requirements, financial aid, and administrative procedures. Be precise and cite specific ISU policies when possible.${calendarSection}`;
     case "planning":
-      return `${base} You specialize in academic planning, course selection, degree roadmaps, and career guidance tailored to ISU programs. Give structured, actionable advice.`;
+      return `${base} You specialize in academic planning, course selection, degree roadmaps, and career guidance tailored to ISU programs. Give structured, actionable advice.${calendarSection}`;
     case "tutor":
-      return `${base} You are a patient tutor helping students understand course material, concepts, and homework problems. Break down complex ideas into clear explanations.`;
+      return `${base} You are a patient tutor helping students understand course material, concepts, and homework problems. Break down complex ideas into clear explanations.${calendarSection}`;
   }
 }
 
 export async function chat(
   message: string,
   history: Message[],
-  profile: StudentProfile = {}
+  profile: StudentProfile = {},
+  calendarContext = ""
 ): Promise<ChatResponse> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -104,7 +109,7 @@ export async function chat(
 
   const intent = await classifyIntent(message, apiKey);
   const model = MODEL_MAP[intent];
-  const systemPrompt = buildSystemPrompt(intent, profile);
+  const systemPrompt = buildSystemPrompt(intent, profile, calendarContext);
 
   const messages: Message[] = [
     { role: "system", content: systemPrompt },

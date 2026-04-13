@@ -1,55 +1,6 @@
 import { createClient } from "@/lib/supabase-server";
+import { parseIcal, getUpcoming, type Assignment } from "@/lib/ical";
 import Link from "next/link";
-
-interface Assignment {
-  id: string;
-  name: string;
-  due_at: string;
-  course_name: string;
-  url: string;
-}
-
-function parseIcal(text: string): Assignment[] {
-  const events: Assignment[] = [];
-  const blocks = text.split("BEGIN:VEVENT");
-
-  for (let i = 1; i < blocks.length; i++) {
-    const block = blocks[i];
-
-    const get = (key: string) => {
-      const match = block.match(new RegExp(`${key}[^:]*:([^\r\n]+)`));
-      return match ? match[1].trim() : "";
-    };
-
-    const dtstart = get("DTSTART");
-    const summary = get("SUMMARY");
-    const url = get("URL");
-    const uid = get("UID");
-
-    if (!dtstart || !summary) continue;
-
-    // Parse date: 20260415T120000Z or 20260415
-    let due: Date;
-    if (dtstart.length === 8) {
-      due = new Date(`${dtstart.slice(0, 4)}-${dtstart.slice(4, 6)}-${dtstart.slice(6, 8)}`);
-    } else {
-      due = new Date(
-        dtstart.replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?/, "$1-$2-$3T$4:$5:$6Z")
-      );
-    }
-
-    if (isNaN(due.getTime())) continue;
-
-    // Extract course name from summary: "Assignment Name (Course Name)"
-    const courseMatch = summary.match(/\(([^)]+)\)\s*$/);
-    const course_name = courseMatch ? courseMatch[1] : "";
-    const name = summary.replace(/\s*\([^)]+\)\s*$/, "").trim();
-
-    events.push({ id: uid, name, due_at: due.toISOString(), course_name, url });
-  }
-
-  return events;
-}
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", {
@@ -105,10 +56,7 @@ async function fetchAssignments(userId: string) {
 
     const text = await res.text();
     const all = parseIcal(text);
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const upcoming = all
-      .filter((a) => new Date(a.due_at) > cutoff)
-      .sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime());
+    const upcoming = getUpcoming(all, 60);
 
     return { assignments: upcoming, hasUrl: true };
   } catch {
