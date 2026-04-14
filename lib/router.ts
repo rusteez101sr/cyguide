@@ -177,38 +177,75 @@ You specialize in ISU academic policies. You have deep knowledge of:
 
 Be precise. Cite specific ISU policies when possible. If uncertain, direct them to the Registrar, Dean of Students, or Financial Aid office.${extraSection}`;
 
-    case "degree_planning":
+    case "degree_planning": {
+      const yearInfo = profile.class_year ? `They are a ${profile.class_year}.` : "";
+      const gpaInfo = profile.gpa ? `Current GPA: ${profile.gpa}.` : "";
+      const courseCount = profile.courses?.length ?? 0;
       return `${base}
 
-You specialize in academic planning and degree navigation for ISU students. You help with:
-- Semester-by-semester course planning
-- 4-year degree plan generation based on their major
+You specialize in academic planning and degree navigation for ISU students. ${yearInfo} ${gpaInfo}
+
+You help with:
+- Semester-by-semester course planning tailored to their specific major (${profile.major || "their major"})
+- 4-year degree plan generation based on ISU's actual curriculum
 - What-if scenarios (failing a course, switching majors, adding a minor)
 - Course prerequisite chains and sequencing
 - Career path alignment with coursework
-- Load balancing (credits per semester)
+- Load balancing (12–18 credits per semester)
 
-Give structured, actionable advice. Use tables or lists when showing course sequences. Consider the student's current year and completed courses.${extraSection}`;
+${courseCount > 0 ? `They are currently enrolled in ${courseCount} course(s) — factor those into planning.` : ""}
 
-    case "professor_lookup":
+Give structured, specific advice using their actual major and year. Use formatted lists for course sequences. Never give generic advice — always reference their specific situation.${extraSection}`;
+    }
+
+    case "professor_lookup": {
+      const profList = profile.courses && profile.courses.length > 0
+        ? profile.courses
+            .filter((c) => c.professor_name)
+            .map((c) =>
+              [
+                `• ${c.course_code} (${c.course_name}): Prof. ${c.professor_name}`,
+                c.professor_email ? `  Email: ${c.professor_email}` : "",
+                c.professor_office ? `  Office: ${c.professor_office}` : "",
+                c.professor_office_hours ? `  Hours: ${c.professor_office_hours}` : "",
+              ]
+                .filter(Boolean)
+                .join("\n")
+            )
+            .join("\n")
+        : null;
+
       return `${base}
 
-You help students find professor contact information. If course info is in the student's profile, use it. If not, provide what you know from ISU faculty directories.
-Format contact cards clearly: Name, Email, Office, Office Hours.${extraSection}`;
+You help students find professor contact information. Always use the actual data from the student's profile first — never invent contact details.
 
-    case "advisor_email":
+${profList ? `Known professors from their enrolled courses:\n${profList}\n\nPresent this data directly when asked. Do not say you "don't have access" if the info is listed above.` : "The student has not entered course info yet. Encourage them to add courses in Settings so you can provide accurate professor contacts."}
+
+Format contact cards clearly with: Name, Email, Office, Office Hours.${extraSection}`;
+    }
+
+    case "advisor_email": {
+      const recipientName = profile.advisor_name || "their advisor";
+      const recipientEmail = profile.advisor_email ? ` (${profile.advisor_email})` : "";
+      const sigName = profile.name || "[Your Name]";
+      const sigNetId = profile.net_id ? ` | ${profile.net_id}` : "";
+      const sigMajor = profile.major ? ` | ${profile.major}` : "";
       return `${base}
 
 You draft professional, warm emails from students to their academic advisors or professors.
 
+The student's advisor is ${recipientName}${recipientEmail}. Use their real name in the salutation.
+
 Email format rules:
-- Subject line: concise and specific
-- Salutation: "Dear [Name],"
+- Subject line: concise and specific (no placeholder brackets)
+- Salutation: "Dear ${recipientName},"
 - Body: 2-3 paragraphs — introduce the issue, provide context, make a specific ask
-- Sign-off: "Best regards, [Student Name] | [Net ID] | [Major]"
+- Sign-off: "Best regards,\\n${sigName}${sigNetId}${sigMajor}"
 - Tone: professional but approachable
+- NEVER use placeholder text like [Name] or [Net ID] — use the actual values from the student profile
 
 After drafting, offer to: regenerate, make it more formal, or make it shorter.${extraSection}`;
+    }
 
     case "campus_events":
       return `${base}

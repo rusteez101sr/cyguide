@@ -21,7 +21,18 @@ const ISU_MAJORS = [
 const CLASS_YEARS = ["Freshman", "Sophomore", "Junior", "Senior"];
 const MEAL_PLANS = ["None", "Cyclone", "Cardinal", "Gold"];
 
-type Step = "name" | "netid" | "major" | "year" | "advisor" | "courses" | "oncampus" | "mealplan" | "done";
+type Step =
+  | "name"
+  | "netid"
+  | "major"
+  | "year"
+  | "gpa"
+  | "advisor"
+  | "advisor_email"
+  | "courses"
+  | "oncampus"
+  | "mealplan"
+  | "done";
 
 interface BotMessage {
   from: "bot" | "user";
@@ -33,35 +44,67 @@ interface OnboardingData {
   net_id: string;
   major: string;
   class_year: string;
+  gpa: string;
   advisor_name: string;
   advisor_email: string;
-  advisor_phone: string;
-  advisor_office: string;
   courses: string[];
   on_campus: boolean;
   meal_plan: string;
 }
 
-const STEP_SEQUENCE: Step[] = ["name", "netid", "major", "year", "advisor", "courses", "oncampus", "mealplan", "done"];
+const STEP_SEQUENCE: Step[] = [
+  "name", "netid", "major", "year", "gpa",
+  "advisor", "advisor_email", "courses", "oncampus", "mealplan", "done",
+];
 
 function getNextStep(current: Step): Step {
   const idx = STEP_SEQUENCE.indexOf(current);
   return STEP_SEQUENCE[idx + 1] ?? "done";
 }
 
+/** Guess ISU email from advisor full name: "Dr. Sarah Kim" → "sarah.kim@iastate.edu" */
+function guessAdvisorEmail(name: string): string {
+  const cleaned = name.replace(/^(Dr\.|Prof\.|Mr\.|Mrs\.|Ms\.)\s*/i, "").trim();
+  const parts = cleaned.split(/\s+/);
+  if (parts.length >= 2) {
+    const first = parts[0].toLowerCase().replace(/[^a-z]/g, "");
+    const last = parts[parts.length - 1].toLowerCase().replace(/[^a-z]/g, "");
+    return `${first}.${last}@iastate.edu`;
+  }
+  return "";
+}
+
 function getBotQuestion(step: Step, data: Partial<OnboardingData>): string {
   const firstName = data.name?.split(" ")[0];
+  const guessed = data.advisor_name ? guessAdvisorEmail(data.advisor_name) : "";
+
   switch (step) {
-    case "name": return "Hey! I'm CyGuide, your ISU AI companion. 👋\n\nLet's get you set up. What's your full name?";
-    case "netid": return `Nice to meet you, ${firstName}! What's your ISU Net ID? (e.g. jsmith1)`;
-    case "major": return `Got it! What's your major?`;
-    case "year": return `What year are you? (Freshman, Sophomore, Junior, or Senior)`;
-    case "advisor": return `Who is your academic advisor? (Just their name is fine — e.g. "Dr. Sarah Kim")`;
-    case "courses": return `What courses are you enrolled in this semester? List the course codes separated by commas. (e.g. "COMS 311, MATH 267, E E 201")`;
-    case "oncampus": return `Are you living on campus or off campus? (reply "on" or "off")`;
-    case "mealplan": return `What meal plan do you have? (None, Cyclone, Cardinal, or Gold)`;
-    case "done": return `You're all set, ${firstName}! Welcome to CyGuide 🎉\n\nI've saved your profile. You can always update it in Settings. Let's head to your dashboard!`;
-    default: return "";
+    case "name":
+      return "Hey! I'm CyGuide, your ISU AI companion.\n\nLet's get you set up in about 2 minutes. What's your full name?";
+    case "netid":
+      return `Nice to meet you, ${firstName}! What's your ISU Net ID? (e.g. jsmith1)`;
+    case "major":
+      return `Got it! What's your major?`;
+    case "year":
+      return `What year are you? (Freshman, Sophomore, Junior, or Senior)`;
+    case "gpa":
+      return `What's your current GPA? (e.g. 3.5 — type "skip" to continue)`;
+    case "advisor":
+      return `Who is your academic advisor? Just their name, like "Dr. Sarah Kim".`;
+    case "advisor_email":
+      return guessed
+        ? `Based on that, their ISU email is probably **${guessed}**. Type "yes" to confirm, or enter the correct email if different.`
+        : `What's your advisor's email? You can find it in your ISU email or on your college's website. (Type "skip" if you don't know)`;
+    case "courses":
+      return `What courses are you enrolled in this semester? List course codes separated by commas.\n\n(e.g. "COMS 311, MATH 267, E E 201")`;
+    case "oncampus":
+      return `Are you living on campus or off campus? (reply "on" or "off")`;
+    case "mealplan":
+      return `What meal plan do you have? (None, Cyclone, Cardinal, or Gold)`;
+    case "done":
+      return `You're all set, ${firstName}! Welcome to CyGuide 🎉\n\nYour profile is saved — I'll use it to personalize every answer. Heading to your dashboard now!`;
+    default:
+      return "";
   }
 }
 
@@ -78,7 +121,6 @@ export default function OnboardingPage() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Show initial bot message
     setMessages([{ from: "bot", text: getBotQuestion("name", {}) }]);
   }, []);
 
@@ -87,15 +129,19 @@ export default function OnboardingPage() {
   }, [messages]);
 
   useEffect(() => {
-    inputRef.current?.focus();
+    // Small delay so the DOM settles before focusing
+    const t = setTimeout(() => inputRef.current?.focus(), 80);
+    return () => clearTimeout(t);
   }, [step]);
 
-  function handleMajorInput(val: string) {
+  function handleInput(val: string) {
     setInput(val);
     if (step === "major" && val.length > 1) {
-      const filtered = ISU_MAJORS.filter((m) => m.toLowerCase().includes(val.toLowerCase())).slice(0, 5);
+      const filtered = ISU_MAJORS.filter((m) =>
+        m.toLowerCase().includes(val.toLowerCase())
+      ).slice(0, 5);
       setMajorSuggestions(filtered);
-    } else {
+    } else if (majorSuggestions.length > 0) {
       setMajorSuggestions([]);
     }
   }
@@ -110,8 +156,7 @@ export default function OnboardingPage() {
     setInput("");
     setLoading(true);
 
-    // Small delay to feel natural
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, 500));
 
     let newData = { ...data };
     let nextStep = getNextStep(step);
@@ -131,7 +176,7 @@ export default function OnboardingPage() {
 
         case "netid":
           if (!/^[a-zA-Z]+\d*$/.test(text)) {
-            botReply = `That doesn't look like a Net ID. It should be letters followed by numbers (e.g. jsmith1). Try again?`;
+            botReply = `That doesn't look like a Net ID — it should be letters then numbers (e.g. jsmith1). Try again?`;
             nextStep = "netid";
           } else {
             newData.net_id = text.toLowerCase();
@@ -142,11 +187,13 @@ export default function OnboardingPage() {
         case "major": {
           const match = ISU_MAJORS.find((m) => m.toLowerCase() === text.toLowerCase());
           if (!match) {
-            const close = ISU_MAJORS.filter((m) => m.toLowerCase().includes(text.toLowerCase())).slice(0, 3);
+            const close = ISU_MAJORS.filter((m) =>
+              m.toLowerCase().includes(text.toLowerCase())
+            ).slice(0, 3);
             if (close.length > 0) {
-              botReply = `I didn't recognize that exact major. Did you mean one of these?\n${close.map((m) => `• ${m}`).join("\n")}\n\nType the exact name to continue.`;
+              botReply = `I didn't recognize that exact major. Did you mean:\n${close.map((m) => `• ${m}`).join("\n")}\n\nType the exact name to continue.`;
             } else {
-              botReply = `I don't have that major in my list. Try something like "Computer Science", "Mechanical Engineering", or "Business Administration".`;
+              botReply = `I don't have that in my list. Try "Computer Science", "Mechanical Engineering", or "Business Administration".`;
             }
             nextStep = "major";
           } else {
@@ -163,41 +210,76 @@ export default function OnboardingPage() {
             nextStep = "year";
           } else {
             newData.class_year = match;
+            botReply = getBotQuestion("gpa", newData);
+          }
+          break;
+        }
+
+        case "gpa": {
+          if (text.toLowerCase() === "skip") {
+            newData.gpa = "";
             botReply = getBotQuestion("advisor", newData);
+          } else {
+            const gpaNum = parseFloat(text);
+            if (isNaN(gpaNum) || gpaNum < 0 || gpaNum > 4.0) {
+              botReply = `Please enter a GPA between 0.0 and 4.0, or type "skip" to continue.`;
+              nextStep = "gpa";
+            } else {
+              newData.gpa = text;
+              botReply = getBotQuestion("advisor", newData);
+            }
           }
           break;
         }
 
         case "advisor":
           newData.advisor_name = text;
-          botReply = getBotQuestion("courses", newData);
+          botReply = getBotQuestion("advisor_email", newData);
           break;
+
+        case "advisor_email": {
+          const guessed = newData.advisor_name ? guessAdvisorEmail(newData.advisor_name) : "";
+          if (text.toLowerCase() === "skip") {
+            newData.advisor_email = "";
+          } else if (text.toLowerCase() === "yes" && guessed) {
+            newData.advisor_email = guessed;
+          } else if (text.includes("@")) {
+            newData.advisor_email = text.toLowerCase();
+          } else {
+            botReply = `Please enter a valid email (e.g. sarah.kim@iastate.edu), type "yes" to confirm ${guessed}, or type "skip".`;
+            nextStep = "advisor_email";
+            break;
+          }
+          botReply = newData.advisor_email
+            ? `Got it — I'll use **${newData.advisor_email}** when drafting emails for you.\n\n` + getBotQuestion("courses", newData)
+            : getBotQuestion("courses", newData);
+          break;
+        }
 
         case "courses": {
           const codes = text.split(/[,;]+/).map((c) => c.trim()).filter(Boolean);
           newData.courses = codes;
 
-          // Look up courses in the database
           try {
             const res = await fetch("/api/student/courses-lookup", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ codes }),
             });
-            const courseData = res.ok ? await res.json() : { found: [], notFound: codes };
-            const found = courseData.found ?? [];
-            const notFound = courseData.notFound ?? [];
+            const courseData = res.ok ? await res.json() : null;
+            const found: Array<{ course_code: string; professor_name: string }> = courseData?.found ?? [];
+            const notFound: string[] = courseData?.notFound ?? codes;
 
             let courseMsg = "";
             if (found.length > 0) {
-              courseMsg = `Found these courses:\n${found.map((c: { course_code: string; professor_name: string }) => `• ${c.course_code} — Prof. ${c.professor_name}`).join("\n")}`;
+              courseMsg = `Found in the ISU catalog:\n${found.map((c) => `• ${c.course_code} — Prof. ${c.professor_name}`).join("\n")}`;
             }
             if (notFound.length > 0) {
-              courseMsg += (courseMsg ? "\n" : "") + `Couldn't find: ${notFound.join(", ")} (I'll add them manually).`;
+              courseMsg += (courseMsg ? "\n" : "") + `Couldn't find: ${notFound.join(", ")} — I'll add them as-is.`;
             }
             botReply = (courseMsg ? courseMsg + "\n\n" : "") + getBotQuestion("oncampus", newData);
           } catch {
-            botReply = `Saved those courses! ` + getBotQuestion("oncampus", newData);
+            botReply = `Saved ${codes.length} course${codes.length === 1 ? "" : "s"}! ` + getBotQuestion("oncampus", newData);
           }
           break;
         }
@@ -209,7 +291,7 @@ export default function OnboardingPage() {
           } else if (lower.includes("off") || lower.includes("no")) {
             newData.on_campus = false;
           } else {
-            botReply = `Please reply "on" (on campus) or "off" (off campus).`;
+            botReply = `Reply "on" (on campus) or "off" (off campus).`;
             nextStep = "oncampus";
             break;
           }
@@ -226,7 +308,6 @@ export default function OnboardingPage() {
           }
           newData.meal_plan = match;
 
-          // Save to database
           try {
             const res = await fetch("/api/student", {
               method: "POST",
@@ -236,10 +317,16 @@ export default function OnboardingPage() {
                 net_id: newData.net_id,
                 major: newData.major,
                 class_year: newData.class_year,
+                gpa: newData.gpa || null,
                 advisor_name: newData.advisor_name,
+                advisor_email: newData.advisor_email || null,
                 on_campus: newData.on_campus,
                 meal_plan: newData.meal_plan,
                 onboarding_complete: true,
+                courses: (newData.courses ?? []).map((code) => ({
+                  course_code: code,
+                  course_name: code,
+                })),
               }),
             });
             if (!res.ok) throw new Error("Save failed");
@@ -251,8 +338,6 @@ export default function OnboardingPage() {
 
           botReply = getBotQuestion("done", newData);
           nextStep = "done";
-
-          // Redirect after a moment
           setTimeout(() => router.replace("/dashboard"), 3000);
           break;
         }
@@ -269,29 +354,36 @@ export default function OnboardingPage() {
   }
 
   const isDone = step === "done";
+  const totalSteps = STEP_SEQUENCE.length - 1; // exclude "done"
+  const currentIdx = STEP_SEQUENCE.indexOf(step);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
       <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center gap-3 shrink-0">
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm" style={{ backgroundColor: "#C8102E" }}>
+        <div
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm"
+          style={{ backgroundColor: "#C8102E" }}
+        >
           Cy
         </div>
         <div>
           <p className="font-semibold text-sm text-gray-900">CyGuide Setup</p>
           <p className="text-xs text-gray-500">Iowa State University</p>
         </div>
-        <div className="ml-auto">
-          <div className="flex gap-1">
-            {STEP_SEQUENCE.slice(0, -1).map((s, i) => (
-              <div
-                key={s}
-                className={`h-1.5 w-6 rounded-full transition-colors ${
-                  STEP_SEQUENCE.indexOf(step) > i ? "bg-red-500" : STEP_SEQUENCE.indexOf(step) === i ? "bg-red-300" : "bg-gray-200"
-                }`}
-              />
-            ))}
-          </div>
+        <div className="ml-auto flex gap-1">
+          {Array.from({ length: totalSteps }).map((_, i) => (
+            <div
+              key={i}
+              className={`h-1.5 w-5 rounded-full transition-colors ${
+                currentIdx > i
+                  ? "bg-red-500"
+                  : currentIdx === i
+                  ? "bg-red-300"
+                  : "bg-gray-200"
+              }`}
+            />
+          ))}
         </div>
       </header>
 
@@ -299,9 +391,15 @@ export default function OnboardingPage() {
       <main className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-xl mx-auto flex flex-col gap-4">
           {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.from === "user" ? "justify-end" : "justify-start"} gap-3`}>
+            <div
+              key={i}
+              className={`flex ${msg.from === "user" ? "justify-end" : "justify-start"} gap-3`}
+            >
               {msg.from === "bot" && (
-                <div className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold mt-0.5" style={{ backgroundColor: "#C8102E" }}>
+                <div
+                  className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold mt-0.5"
+                  style={{ backgroundColor: "#C8102E" }}
+                >
                   Cy
                 </div>
               )}
@@ -320,13 +418,20 @@ export default function OnboardingPage() {
 
           {loading && (
             <div className="flex gap-3 justify-start">
-              <div className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold" style={{ backgroundColor: "#C8102E" }}>
+              <div
+                className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold"
+                style={{ backgroundColor: "#C8102E" }}
+              >
                 Cy
               </div>
               <div className="bg-white border border-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
                 <div className="flex gap-1 items-center">
                   {[0, 1, 2].map((i) => (
-                    <span key={i} className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                    <span
+                      key={i}
+                      className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"
+                      style={{ animationDelay: `${i * 0.15}s` }}
+                    />
                   ))}
                 </div>
               </div>
@@ -342,11 +447,17 @@ export default function OnboardingPage() {
           <div className="max-w-xl mx-auto relative">
             {/* Major suggestions */}
             {majorSuggestions.length > 0 && (
-              <div className="absolute bottom-full left-0 right-0 mb-2 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+              <div className="absolute bottom-full left-0 right-0 mb-2 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-10">
                 {majorSuggestions.map((m) => (
                   <button
                     key={m}
-                    onClick={() => { setInput(m); setMajorSuggestions([]); inputRef.current?.focus(); }}
+                    onMouseDown={(e) => {
+                      // Prevent the input from blurring when clicking suggestion
+                      e.preventDefault();
+                      setInput(m);
+                      setMajorSuggestions([]);
+                      inputRef.current?.focus();
+                    }}
                     className="w-full text-left px-4 py-2.5 text-sm text-gray-800 hover:bg-red-50 transition-colors"
                   >
                     {m}
@@ -354,22 +465,45 @@ export default function OnboardingPage() {
                 ))}
               </div>
             )}
+
             {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
+
             <div className="flex gap-2">
               <input
                 ref={inputRef}
                 type="text"
                 value={input}
-                onChange={(e) => handleMajorInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+                onChange={(e) => handleInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSubmit();
+                }}
+                onBlur={(e) => {
+                  // If focus moved to nothing (body), refocus the input
+                  // This catches cases where a state update causes transient blur
+                  if (!e.relatedTarget && !loading && step !== "done") {
+                    setTimeout(() => inputRef.current?.focus(), 50);
+                  }
+                }}
                 placeholder={
-                  step === "major" ? "Type your major…" :
-                  step === "year" ? "Freshman, Sophomore, Junior, or Senior" :
-                  step === "oncampus" ? "on or off" :
-                  step === "mealplan" ? "None, Cyclone, Cardinal, or Gold" :
-                  "Type your answer…"
+                  step === "major"
+                    ? "Type your major…"
+                    : step === "year"
+                    ? "Freshman, Sophomore, Junior, or Senior"
+                    : step === "gpa"
+                    ? "e.g. 3.5  —  or type skip"
+                    : step === "advisor_email"
+                    ? "yes / correct email / skip"
+                    : step === "oncampus"
+                    ? "on  or  off"
+                    : step === "mealplan"
+                    ? "None, Cyclone, Cardinal, or Gold"
+                    : "Type your answer…"
                 }
                 disabled={loading}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
                 className="flex-1 rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 disabled:opacity-50"
               />
               <button
