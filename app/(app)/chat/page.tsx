@@ -109,9 +109,11 @@ function ChatContent() {
   const initialQ = searchParams.get("q");
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState(initialQ ? decodeURIComponent(initialQ) : "");
   const [loading, setLoading] = useState(false);
+  // Uncontrolled: only tracks whether button should be enabled
+  const [hasText, setHasText] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Uncontrolled textarea — React never writes value, so focus is never stolen
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -122,21 +124,27 @@ function ChatContent() {
   useEffect(() => {
     if (initialQ) {
       const decoded = decodeURIComponent(initialQ);
+      if (inputRef.current) inputRef.current.value = decoded;
+      setHasText(decoded.trim().length > 0);
       setTimeout(() => send(decoded), 100);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function send(text: string) {
-    const trimmed = text.trim();
+  async function send(text?: string) {
+    const trimmed = (text ?? inputRef.current?.value ?? "").trim();
     if (!trimmed || loading) return;
+
+    // Clear textarea immediately
+    if (inputRef.current) {
+      inputRef.current.value = "";
+      inputRef.current.style.height = "auto";
+    }
+    setHasText(false);
 
     const userMsg: Message = { role: "user", content: trimmed };
     const nextMessages = [...messages, userMsg];
     setMessages(nextMessages);
-    setInput("");
     setLoading(true);
-
-    if (inputRef.current) inputRef.current.style.height = "auto";
 
     try {
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
@@ -169,13 +177,13 @@ function ChatContent() {
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    send(input);
+    send();
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      send(input);
+      send();
     }
   }
 
@@ -217,6 +225,7 @@ function ChatContent() {
                     key={s}
                     onClick={() => send(s)}
                     className="text-left text-sm px-4 py-3 rounded-xl border border-gray-200 hover:border-red-200 hover:bg-red-50 transition-colors text-gray-700 leading-snug"
+                    type="button"
                   >
                     {s}
                   </button>
@@ -277,21 +286,23 @@ function ChatContent() {
           <textarea
             ref={inputRef}
             rows={1}
-            value={input}
             onChange={(e) => {
-              setInput(e.target.value);
+              setHasText(e.target.value.trim().length > 0);
               e.target.style.height = "auto";
               e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
             }}
             onKeyDown={handleKeyDown}
             placeholder="Ask about ISU policies, courses, dining, events…"
             disabled={loading}
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
             className="flex-1 resize-none rounded-xl border border-gray-200 px-4 py-3 text-sm leading-relaxed focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 disabled:opacity-50 transition-colors placeholder:text-gray-400"
             style={{ minHeight: "48px", maxHeight: "160px" }}
           />
           <button
             type="submit"
-            disabled={!input.trim() || loading}
+            disabled={!hasText || loading}
             className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-white transition-opacity disabled:opacity-40"
             style={{ backgroundColor: "#C8102E" }}
             aria-label="Send"

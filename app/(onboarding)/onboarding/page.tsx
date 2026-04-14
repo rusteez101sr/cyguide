@@ -90,13 +90,13 @@ function getBotQuestion(step: Step, data: Partial<OnboardingData>): string {
     case "gpa":
       return `What's your current GPA? (e.g. 3.5 — type "skip" to continue)`;
     case "advisor":
-      return `Who is your academic advisor? Just their name, like "Dr. Sarah Kim".`;
+      return `Who is your academic advisor? Just their name — e.g. "Dr. Sarah Kim".`;
     case "advisor_email":
       return guessed
-        ? `Based on that, their ISU email is probably **${guessed}**. Type "yes" to confirm, or enter the correct email if different.`
-        : `What's your advisor's email? You can find it in your ISU email or on your college's website. (Type "skip" if you don't know)`;
+        ? `Based on that, their ISU email is probably **${guessed}**.\n\nType "yes" to confirm, or enter the correct email if that's wrong.`
+        : `What's your advisor's email? Check your ISU email for their signature. (Type "skip" if you don't know)`;
     case "courses":
-      return `What courses are you enrolled in this semester? List course codes separated by commas.\n\n(e.g. "COMS 311, MATH 267, E E 201")`;
+      return `What courses are you in this semester? List course codes separated by commas.\n\n(e.g. "COMS 311, MATH 267, E E 201")`;
     case "oncampus":
       return `Are you living on campus or off campus? (reply "on" or "off")`;
     case "mealplan":
@@ -112,12 +112,15 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [messages, setMessages] = useState<BotMessage[]>([]);
   const [step, setStep] = useState<Step>("name");
-  const [input, setInput] = useState("");
   const [data, setData] = useState<Partial<OnboardingData>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [majorSuggestions, setMajorSuggestions] = useState<string[]>([]);
+  // Uncontrolled: only drives button enabled state, does NOT control input value
+  const [hasText, setHasText] = useState(false);
+
   const bottomRef = useRef<HTMLDivElement>(null);
+  // The ONE source of truth for the input element — uncontrolled
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -128,14 +131,22 @@ export default function OnboardingPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // On step change: clear the input DOM value and focus
   useEffect(() => {
-    // Small delay so the DOM settles before focusing
-    const t = setTimeout(() => inputRef.current?.focus(), 80);
+    if (inputRef.current) {
+      inputRef.current.value = "";
+      setHasText(false);
+    }
+    setMajorSuggestions([]);
+    const t = setTimeout(() => inputRef.current?.focus(), 60);
     return () => clearTimeout(t);
   }, [step]);
 
-  function handleInput(val: string) {
-    setInput(val);
+  /** Called on every keystroke — only updates suggestion/button state, never the input value */
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const val = e.target.value;
+    setHasText(val.trim().length > 0);
+
     if (step === "major" && val.length > 1) {
       const filtered = ISU_MAJORS.filter((m) =>
         m.toLowerCase().includes(val.toLowerCase())
@@ -146,14 +157,17 @@ export default function OnboardingPage() {
     }
   }
 
-  async function handleSubmit(value?: string) {
-    const text = (value ?? input).trim();
+  async function handleSubmit(presetValue?: string) {
+    const text = (presetValue ?? inputRef.current?.value ?? "").trim();
     if (!text || loading) return;
 
-    setError("");
+    // Clear the input immediately
+    if (inputRef.current) inputRef.current.value = "";
+    setHasText(false);
     setMajorSuggestions([]);
+    setError("");
+
     setMessages((prev) => [...prev, { from: "user", text }]);
-    setInput("");
     setLoading(true);
 
     await new Promise((r) => setTimeout(r, 500));
@@ -176,7 +190,7 @@ export default function OnboardingPage() {
 
         case "netid":
           if (!/^[a-zA-Z]+\d*$/.test(text)) {
-            botReply = `That doesn't look like a Net ID — it should be letters then numbers (e.g. jsmith1). Try again?`;
+            botReply = `That doesn't look like a Net ID — should be letters then numbers (e.g. jsmith1). Try again?`;
             nextStep = "netid";
           } else {
             newData.net_id = text.toLowerCase();
@@ -190,15 +204,13 @@ export default function OnboardingPage() {
             const close = ISU_MAJORS.filter((m) =>
               m.toLowerCase().includes(text.toLowerCase())
             ).slice(0, 3);
-            if (close.length > 0) {
-              botReply = `I didn't recognize that exact major. Did you mean:\n${close.map((m) => `• ${m}`).join("\n")}\n\nType the exact name to continue.`;
-            } else {
-              botReply = `I don't have that in my list. Try "Computer Science", "Mechanical Engineering", or "Business Administration".`;
-            }
+            botReply = close.length > 0
+              ? `I didn't recognize that. Did you mean:\n${close.map((m) => `• ${m}`).join("\n")}\n\nType the exact name to continue.`
+              : `I don't have that in my list. Try "Computer Science", "Mechanical Engineering", or "Business Administration".`;
             nextStep = "major";
           } else {
             newData.major = match;
-            botReply = `Got it — **${match}**! ` + getBotQuestion("year", newData);
+            botReply = `Got it — **${match}**!\n\n` + getBotQuestion("year", newData);
           }
           break;
         }
@@ -222,7 +234,7 @@ export default function OnboardingPage() {
           } else {
             const gpaNum = parseFloat(text);
             if (isNaN(gpaNum) || gpaNum < 0 || gpaNum > 4.0) {
-              botReply = `Please enter a GPA between 0.0 and 4.0, or type "skip" to continue.`;
+              botReply = `Please enter a GPA between 0.0 and 4.0, or type "skip".`;
               nextStep = "gpa";
             } else {
               newData.gpa = text;
@@ -246,12 +258,12 @@ export default function OnboardingPage() {
           } else if (text.includes("@")) {
             newData.advisor_email = text.toLowerCase();
           } else {
-            botReply = `Please enter a valid email (e.g. sarah.kim@iastate.edu), type "yes" to confirm ${guessed}, or type "skip".`;
+            botReply = `Enter a valid email (e.g. sarah.kim@iastate.edu), type "yes" to confirm ${guessed}, or type "skip".`;
             nextStep = "advisor_email";
             break;
           }
           botReply = newData.advisor_email
-            ? `Got it — I'll use **${newData.advisor_email}** when drafting emails for you.\n\n` + getBotQuestion("courses", newData)
+            ? `Got it — I'll use **${newData.advisor_email}** when drafting emails.\n\n` + getBotQuestion("courses", newData)
             : getBotQuestion("courses", newData);
           break;
         }
@@ -269,17 +281,16 @@ export default function OnboardingPage() {
             const courseData = res.ok ? await res.json() : null;
             const found: Array<{ course_code: string; professor_name: string }> = courseData?.found ?? [];
             const notFound: string[] = courseData?.notFound ?? codes;
-
             let courseMsg = "";
             if (found.length > 0) {
-              courseMsg = `Found in the ISU catalog:\n${found.map((c) => `• ${c.course_code} — Prof. ${c.professor_name}`).join("\n")}`;
+              courseMsg = `Found in ISU catalog:\n${found.map((c) => `• ${c.course_code} — Prof. ${c.professor_name}`).join("\n")}`;
             }
             if (notFound.length > 0) {
-              courseMsg += (courseMsg ? "\n" : "") + `Couldn't find: ${notFound.join(", ")} — I'll add them as-is.`;
+              courseMsg += (courseMsg ? "\n" : "") + `Couldn't find: ${notFound.join(", ")} — added as-is.`;
             }
             botReply = (courseMsg ? courseMsg + "\n\n" : "") + getBotQuestion("oncampus", newData);
           } catch {
-            botReply = `Saved ${codes.length} course${codes.length === 1 ? "" : "s"}! ` + getBotQuestion("oncampus", newData);
+            botReply = `Saved ${codes.length} course${codes.length === 1 ? "" : "s"}!\n\n` + getBotQuestion("oncampus", newData);
           }
           break;
         }
@@ -354,7 +365,7 @@ export default function OnboardingPage() {
   }
 
   const isDone = step === "done";
-  const totalSteps = STEP_SEQUENCE.length - 1; // exclude "done"
+  const totalSteps = STEP_SEQUENCE.length - 1;
   const currentIdx = STEP_SEQUENCE.indexOf(step);
 
   return (
@@ -376,11 +387,7 @@ export default function OnboardingPage() {
             <div
               key={i}
               className={`h-1.5 w-5 rounded-full transition-colors ${
-                currentIdx > i
-                  ? "bg-red-500"
-                  : currentIdx === i
-                  ? "bg-red-300"
-                  : "bg-gray-200"
+                currentIdx > i ? "bg-red-500" : currentIdx === i ? "bg-red-300" : "bg-gray-200"
               }`}
             />
           ))}
@@ -441,83 +448,80 @@ export default function OnboardingPage() {
         </div>
       </main>
 
-      {/* Input */}
-      {!isDone && (
-        <div className="bg-white border-t border-gray-100 px-4 py-4 shrink-0">
-          <div className="max-w-xl mx-auto relative">
-            {/* Major suggestions */}
-            {majorSuggestions.length > 0 && (
-              <div className="absolute bottom-full left-0 right-0 mb-2 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-10">
-                {majorSuggestions.map((m) => (
-                  <button
-                    key={m}
-                    onMouseDown={(e) => {
-                      // Prevent the input from blurring when clicking suggestion
-                      e.preventDefault();
-                      setInput(m);
-                      setMajorSuggestions([]);
-                      inputRef.current?.focus();
-                    }}
-                    className="w-full text-left px-4 py-2.5 text-sm text-gray-800 hover:bg-red-50 transition-colors"
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
-
-            <div className="flex gap-2">
-              <input
-                ref={inputRef}
-                type="text"
-                value={input}
-                onChange={(e) => handleInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleSubmit();
-                }}
-                onBlur={(e) => {
-                  // If focus moved to nothing (body), refocus the input
-                  // This catches cases where a state update causes transient blur
-                  if (!e.relatedTarget && !loading) {
-                    setTimeout(() => inputRef.current?.focus(), 50);
-                  }
-                }}
-                placeholder={
-                  step === "major"
-                    ? "Type your major…"
-                    : step === "year"
-                    ? "Freshman, Sophomore, Junior, or Senior"
-                    : step === "gpa"
-                    ? "e.g. 3.5  —  or type skip"
-                    : step === "advisor_email"
-                    ? "yes / correct email / skip"
-                    : step === "oncampus"
-                    ? "on  or  off"
-                    : step === "mealplan"
-                    ? "None, Cyclone, Cardinal, or Gold"
-                    : "Type your answer…"
-                }
-                disabled={loading}
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                className="flex-1 rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 disabled:opacity-50"
-              />
-              <button
-                onClick={() => handleSubmit()}
-                disabled={!input.trim() || loading}
-                className="px-5 py-3 rounded-xl text-white text-sm font-medium disabled:opacity-40 transition-opacity"
-                style={{ backgroundColor: "#C8102E" }}
-              >
-                Send
-              </button>
+      {/* Input — always rendered in same DOM position, uncontrolled */}
+      <div
+        className="bg-white border-t border-gray-100 px-4 py-4 shrink-0"
+        style={{ display: isDone ? "none" : undefined }}
+      >
+        <div className="max-w-xl mx-auto relative">
+          {/* Major autocomplete — rendered above input */}
+          {majorSuggestions.length > 0 && (
+            <div className="absolute bottom-full left-0 right-0 mb-2 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-10">
+              {majorSuggestions.map((m) => (
+                <button
+                  key={m}
+                  // onMouseDown fires before onBlur; preventDefault keeps focus on input
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    if (inputRef.current) inputRef.current.value = m;
+                    setHasText(true);
+                    setMajorSuggestions([]);
+                    inputRef.current?.focus();
+                  }}
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-800 hover:bg-red-50 transition-colors"
+                >
+                  {m}
+                </button>
+              ))}
             </div>
+          )}
+
+          {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
+
+          <div className="flex gap-2">
+            {/*
+              UNCONTROLLED input — no `value` prop.
+              React never writes to this element during re-renders,
+              so focus is never lost due to state updates.
+            */}
+            <input
+              ref={inputRef}
+              type="text"
+              onChange={handleChange}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) handleSubmit();
+              }}
+              placeholder={
+                step === "major" ? "Type your major…" :
+                step === "year" ? "Freshman / Sophomore / Junior / Senior" :
+                step === "gpa" ? "e.g. 3.5  —  or type skip" :
+                step === "advisor_email" ? "yes  /  email@iastate.edu  /  skip" :
+                step === "oncampus" ? "on  or  off" :
+                step === "mealplan" ? "None / Cyclone / Cardinal / Gold" :
+                "Type your answer…"
+              }
+              disabled={loading}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              className="flex-1 rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 disabled:opacity-50"
+            />
+            <button
+              onMouseDown={(e) => {
+                // Prevent button click from blurring the input
+                e.preventDefault();
+                handleSubmit();
+              }}
+              disabled={!hasText || loading}
+              className="px-5 py-3 rounded-xl text-white text-sm font-medium disabled:opacity-40 transition-opacity"
+              style={{ backgroundColor: "#C8102E" }}
+            >
+              Send
+            </button>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
