@@ -480,7 +480,7 @@ export default function OnboardingPage() {
                 onBlur={(e) => {
                   // If focus moved to nothing (body), refocus the input
                   // This catches cases where a state update causes transient blur
-                  if (!e.relatedTarget && !loading && step !== "done") {
+                  if (!e.relatedTarget && !loading) {
                     setTimeout(() => inputRef.current?.focus(), 50);
                   }
                 }}

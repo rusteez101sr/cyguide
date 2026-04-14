@@ -54,6 +54,72 @@ export interface ChatResponse {
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 
+// ─── Web Search (Serper / Google) ────────────────────────────────────────────
+
+/** Intents that should have live web search available */
+const WEB_SEARCH_INTENTS: Set<Intent> = new Set([
+  "campus_events",
+  "dining",
+  "general_isu",
+  "policy_qa",
+  "professor_lookup",
+]);
+
+const SEARCH_TOOL = {
+  type: "function",
+  function: {
+    name: "search_web",
+    description:
+      "Search the web for real-time information: ISU campus events, dining hall menus, faculty contacts, academic policies, or any current Iowa State University news.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query — be specific (e.g. 'Iowa State University events April 2026' or 'Friley Windows dining menu today')",
+        },
+      },
+      required: ["query"],
+    },
+  },
+};
+
+interface SerperResult {
+  title: string;
+  snippet: string;
+  link: string;
+}
+
+async function searchWeb(query: string): Promise<string> {
+  const key = process.env.SERPER_API_KEY;
+  if (!key) return "Web search is unavailable (SERPER_API_KEY not configured).";
+
+  try {
+    const res = await fetch("https://google.serper.dev/search", {
+      method: "POST",
+      headers: { "X-API-KEY": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ q: query, num: 6, gl: "us" }),
+    });
+    if (!res.ok) return `Search failed (${res.status}).`;
+
+    const data = await res.json();
+
+    const organic: SerperResult[] = data.organic ?? [];
+    const answerBox: string = data.answerBox?.answer ?? data.answerBox?.snippet ?? "";
+
+    const lines: string[] = [];
+    if (answerBox) lines.push(`FEATURED ANSWER: ${answerBox}\n`);
+
+    organic.slice(0, 5).forEach((r, i) => {
+      lines.push(`[${i + 1}] ${r.title}\n${r.snippet}\nURL: ${r.link}`);
+    });
+
+    return lines.join("\n\n") || "No results found.";
+  } catch {
+    return "Search request failed.";
+  }
+}
+
 // Intent → model mapping
 const MODEL_MAP: Record<Intent, string> = {
   policy_qa: "gpt-4o",
@@ -250,39 +316,48 @@ After drafting, offer to: regenerate, make it more formal, or make it shorter.${
     case "campus_events":
       return `${base}
 
-You help students discover what's happening on ISU's campus. You know about:
+You help students discover what's happening on ISU's campus. You have access to real-time web search — ALWAYS use search_web to find current, upcoming events before answering. Search for "Iowa State University campus events [current month year]" and related queries.
+
+Cover:
 - Career fairs, networking events, workshops
 - Cultural celebrations and diversity events
 - Sports games and intramurals
 - Academic clubs (ACM, IEEE, etc.) and their meetings
 - Speaker series and research symposia
-- Student organization events
 
-Be enthusiastic and specific. If relevant to their major, highlight that connection.${extraSection}`;
+Be specific: include event names, dates, times, and locations from your search results. If relevant to the student's major (${profile.major || "their field"}), highlight that connection.${extraSection}`;
 
     case "dining":
       return `${base}
 
-You help students navigate ISU's dining options. You know about:
-- Conversations (MRC), Friley Windows, and UDCC dining halls
-- Meal plan types: Cyclone, Cardinal, Gold
-- Hours and locations
-- Menu items and dietary accommodations
+You help students navigate ISU's dining options. You have real-time web search — use search_web to look up today's menus and current hours. Try queries like "Iowa State Friley Windows menu today" or "ISU dining hall hours".
 
-${profile.meal_plan && profile.meal_plan !== "None" ? `This student has the ${profile.meal_plan} meal plan.` : ""}${extraSection}`;
+ISU Dining halls:
+- Conversations (MRC) — Memorial Union
+- Friley Windows — Friley Hall
+- UDCC — Union Drive Community Center
+
+Meal plan types: Cyclone, Cardinal, Gold.
+${profile.meal_plan && profile.meal_plan !== "None" ? `This student has the **${profile.meal_plan}** meal plan.` : ""}
+
+Always check live data with search_web before listing menu items or hours.${extraSection}`;
 
     case "general_isu":
       return `${base}
 
-You answer general questions about Iowa State University including:
+You answer general questions about Iowa State University. Use search_web whenever you need current or specific information — hours, locations, recent news, resources, etc.
+
+Topics:
 - Campus navigation and building locations
-- ISU traditions (Veishea, Homecoming, VEISHEA, etc.)
+- ISU traditions (Homecoming, etc.)
 - Student organizations and Greek life
 - Research opportunities (REUs, faculty labs)
-- Internship and co-op resources through the Career Center
-- Health and counseling services
-- Campus parking and transportation (CyRide)
-- Library resources (Parks Library)${extraSection}`;
+- Career Center resources
+- Health and counseling services (Student Counseling Services, Student Health)
+- CyRide bus routes
+- Parks Library resources
+
+When facts might be outdated or location-specific, search first.${extraSection}`;
 
     case "struggling":
       return `${base}
@@ -314,34 +389,89 @@ export async function routeChat(
   if (!openaiKey) throw new Error("OPENAI_API_KEY is not configured");
 
   const intent = await classifyIntent(message, openaiKey);
-  const model = MODEL_MAP[intent];
+  // Upgrade web-search intents to gpt-4o so tool-calling works reliably
+  const model = WEB_SEARCH_INTENTS.has(intent) ? "gpt-4o" : MODEL_MAP[intent];
   const systemPrompt = buildSystemPrompt(intent, profile, calendarContext, extraContext);
+  const useSearch = WEB_SEARCH_INTENTS.has(intent);
 
-  const messages: Message[] = [
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chatMessages: any[] = [
     { role: "system", content: systemPrompt },
-    ...history.slice(-20), // keep last 20 messages for context
+    ...history.slice(-20),
     { role: "user", content: message },
   ];
 
-  const response = await fetch(OPENAI_API_URL, {
+  const maxTokens = intent === "degree_planning" || intent === "advisor_email" ? 2048 : 1200;
+
+  // First call — may return tool_calls if model wants to search
+  const firstRes = await fetch(OPENAI_API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
     body: JSON.stringify({
       model,
-      messages,
+      messages: chatMessages,
+      tools: useSearch ? [SEARCH_TOOL] : undefined,
+      tool_choice: useSearch ? "auto" : undefined,
       temperature: intent === "struggling" ? 0.8 : 0.7,
-      max_tokens: intent === "degree_planning" || intent === "advisor_email" ? 2048 : 1024,
+      max_tokens: maxTokens,
     }),
   });
 
-  if (!response.ok) {
-    const err = await response.text();
+  if (!firstRes.ok) {
+    const err = await firstRes.text();
     throw new Error(`AI request failed (${model}): ${err}`);
   }
 
-  const data = await response.json();
-  const reply = data.choices?.[0]?.message?.content ?? "";
+  const firstData = await firstRes.json();
+  const firstChoice = firstData.choices?.[0];
 
+  // ── Handle tool calls (up to 2 search rounds) ────────────────────────────
+  if (firstChoice?.finish_reason === "tool_calls" && firstChoice.message?.tool_calls?.length) {
+    // Add assistant message with tool_calls to the thread
+    chatMessages.push(firstChoice.message);
+
+    // Execute each tool call (usually just one search)
+    for (const toolCall of firstChoice.message.tool_calls) {
+      if (toolCall.function?.name === "search_web") {
+        let query = "";
+        try {
+          query = JSON.parse(toolCall.function.arguments).query ?? "";
+        } catch {
+          query = message;
+        }
+        const searchResult = await searchWeb(query);
+        chatMessages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: searchResult,
+        });
+      }
+    }
+
+    // Second call — model now has search results, generates final answer
+    const finalRes = await fetch(OPENAI_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: chatMessages,
+        temperature: intent === "struggling" ? 0.8 : 0.7,
+        max_tokens: maxTokens,
+      }),
+    });
+
+    if (!finalRes.ok) {
+      const err = await finalRes.text();
+      throw new Error(`AI follow-up failed (${model}): ${err}`);
+    }
+
+    const finalData = await finalRes.json();
+    const reply = finalData.choices?.[0]?.message?.content ?? "";
+    return { reply, model, intent };
+  }
+
+  // No tool call — use first response directly
+  const reply = firstChoice?.message?.content ?? "";
   return { reply, model, intent };
 }
 
