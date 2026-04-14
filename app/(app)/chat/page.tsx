@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useRef, useEffect, FormEvent } from "react";
-
-type Intent = "policy" | "planning" | "tutor";
+import { useState, useRef, useEffect, FormEvent, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { INTENT_META, type Intent } from "@/lib/router";
 
 interface Message {
   role: "user" | "assistant";
@@ -11,15 +11,10 @@ interface Message {
   model?: string;
 }
 
-const INTENT_META: Record<Intent, { label: string; color: string }> = {
-  policy: { label: "Policy", color: "bg-amber-100 text-amber-800" },
-  planning: { label: "Planning", color: "bg-blue-100 text-blue-800" },
-  tutor: { label: "Tutor", color: "bg-emerald-100 text-emerald-800" },
-};
-
 function modelShortName(model: string): string {
-  if (model.includes("claude")) return "Claude";
+  if (model.includes("gpt-4o-mini")) return "GPT-4o mini";
   if (model.includes("gpt-4o")) return "GPT-4o";
+  if (model.includes("claude")) return "Claude";
   if (model.includes("gemini")) return "Gemini";
   return model.split("/").pop() ?? model;
 }
@@ -28,26 +23,93 @@ function TypingIndicator() {
   return (
     <div className="flex gap-1 items-center px-1 py-2">
       {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"
-          style={{ animationDelay: `${i * 0.15}s` }}
-        />
+        <span key={i} className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
       ))}
     </div>
   );
 }
 
+// Simple markdown renderer — handles bold, code, lists, line breaks
+function MarkdownContent({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const result: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Heading
+    if (line.startsWith("### ")) {
+      result.push(<h3 key={i} className="font-semibold text-gray-900 mt-3 mb-1">{line.slice(4)}</h3>);
+    } else if (line.startsWith("## ")) {
+      result.push(<h2 key={i} className="font-semibold text-gray-900 mt-4 mb-1 text-base">{line.slice(3)}</h2>);
+    } else if (line.startsWith("**") && line.endsWith("**") && line.length > 4) {
+      result.push(<p key={i} className="font-semibold text-gray-900 mt-2">{line.slice(2, -2)}</p>);
+    } else if (line.startsWith("- ") || line.startsWith("• ")) {
+      // Collect list items
+      const items: string[] = [];
+      while (i < lines.length && (lines[i].startsWith("- ") || lines[i].startsWith("• "))) {
+        items.push(lines[i].slice(2));
+        i++;
+      }
+      result.push(
+        <ul key={`ul-${i}`} className="list-disc pl-4 space-y-0.5 my-1">
+          {items.map((item, j) => <li key={j} className="text-sm">{renderInline(item)}</li>)}
+        </ul>
+      );
+      continue;
+    } else if (/^\d+\.\s/.test(line)) {
+      // Numbered list
+      const items: string[] = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
+        items.push(lines[i].replace(/^\d+\.\s/, ""));
+        i++;
+      }
+      result.push(
+        <ol key={`ol-${i}`} className="list-decimal pl-4 space-y-0.5 my-1">
+          {items.map((item, j) => <li key={j} className="text-sm">{renderInline(item)}</li>)}
+        </ol>
+      );
+      continue;
+    } else if (line === "") {
+      result.push(<div key={i} className="h-1.5" />);
+    } else {
+      result.push(<p key={i} className="text-sm leading-relaxed">{renderInline(line)}</p>);
+    }
+    i++;
+  }
+
+  return <div className="space-y-0.5">{result}</div>;
+}
+
+function renderInline(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={i} className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">{part.slice(1, -1)}</code>;
+    }
+    return part;
+  });
+}
+
 const SUGGESTIONS = [
-  "What GPA do I need to stay in the engineering college?",
-  "What classes should I take as a CS sophomore next semester?",
-  "Can you explain Big O notation with examples?",
-  "How does the late drop policy work at ISU?",
+  "What's the deadline to drop a class without a W grade?",
+  "Plan out my next two semesters",
+  "Draft an email to my advisor about struggling in a course",
+  "What campus events are happening this week?",
+  "What's on the menu at Friley Windows today?",
+  "I'm really overwhelmed with school right now",
 ];
 
-export default function ChatPage() {
+function ChatContent() {
+  const searchParams = useSearchParams();
+  const initialQ = searchParams.get("q");
+
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialQ ? decodeURIComponent(initialQ) : "");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -55,6 +117,14 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  // Auto-send if query param was provided
+  useEffect(() => {
+    if (initialQ) {
+      const decoded = decodeURIComponent(initialQ);
+      setTimeout(() => send(decoded), 100);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function send(text: string) {
     const trimmed = text.trim();
@@ -66,17 +136,10 @@ export default function ChatPage() {
     setInput("");
     setLoading(true);
 
-    // Reset textarea height
-    if (inputRef.current) {
-      inputRef.current.style.height = "auto";
-    }
+    if (inputRef.current) inputRef.current.style.height = "auto";
 
     try {
-      const history = messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
-
+      const history = messages.map((m) => ({ role: m.role, content: m.content }));
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -91,23 +154,12 @@ export default function ChatPage() {
       const data = await res.json();
       setMessages([
         ...nextMessages,
-        {
-          role: "assistant",
-          content: data.reply,
-          intent: data.intent,
-          model: data.model,
-        },
+        { role: "assistant", content: data.reply, intent: data.intent, model: data.model },
       ]);
     } catch (err) {
       setMessages([
         ...nextMessages,
-        {
-          role: "assistant",
-          content:
-            err instanceof Error
-              ? err.message
-              : "Something went wrong. Please try again.",
-        },
+        { role: "assistant", content: err instanceof Error ? err.message : "Something went wrong. Please try again." },
       ]);
     } finally {
       setLoading(false);
@@ -128,52 +180,35 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-white text-gray-900">
+    <div className="flex flex-col h-screen bg-white">
       {/* Header */}
       <header className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-white z-10 shrink-0">
-        <div
-          className="flex items-center justify-center w-8 h-8 rounded-lg text-white font-bold text-sm select-none"
-          style={{ backgroundColor: "#C8102E" }}
-        >
+        <div className="flex items-center justify-center w-8 h-8 rounded-lg text-white font-bold text-sm select-none" style={{ backgroundColor: "#C8102E" }}>
           Cy
         </div>
         <div>
-          <h1 className="font-semibold text-gray-900 leading-tight text-sm">
-            CyGuide
-          </h1>
-          <p className="text-xs text-gray-500 leading-tight">
-            Iowa State University AI Assistant
-          </p>
+          <h1 className="font-semibold text-gray-900 leading-tight text-sm">CyGuide</h1>
+          <p className="text-xs text-gray-500 leading-tight">Iowa State University AI Assistant</p>
         </div>
         {messages.length > 0 && (
-          <button
-            onClick={() => setMessages([])}
-            className="ml-auto text-xs text-gray-400 hover:text-gray-600 transition-colors"
-          >
+          <button onClick={() => setMessages([])} className="ml-auto text-xs text-gray-400 hover:text-gray-600 transition-colors">
             New chat
           </button>
         )}
       </header>
 
-      {/* Message thread */}
+      {/* Messages */}
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-6">
           {messages.length === 0 ? (
-            /* Empty / welcome state */
             <div className="flex flex-col items-center text-center gap-6 mt-16">
-              <div
-                className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-2xl font-bold shadow-sm select-none"
-                style={{ backgroundColor: "#C8102E" }}
-              >
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-2xl font-bold shadow-sm select-none" style={{ backgroundColor: "#C8102E" }}>
                 Cy
               </div>
               <div>
-                <h2 className="text-2xl font-semibold text-gray-900">
-                  Hi, I&apos;m CyGuide
-                </h2>
+                <h2 className="text-2xl font-semibold text-gray-900">Hi, I&apos;m CyGuide</h2>
                 <p className="text-gray-500 mt-1 text-sm max-w-sm">
-                  Your AI assistant for ISU policies, academic planning, and
-                  course tutoring.
+                  Your AI companion for ISU policies, academic planning, dining, events, and more.
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg mt-2">
@@ -190,53 +225,31 @@ export default function ChatPage() {
             </div>
           ) : (
             messages.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex gap-3 ${
-                  msg.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
+              <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 {msg.role === "assistant" && (
-                  <div
-                    className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold mt-0.5 select-none"
-                    style={{ backgroundColor: "#C8102E" }}
-                  >
+                  <div className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold mt-0.5 select-none" style={{ backgroundColor: "#C8102E" }}>
                     Cy
                   </div>
                 )}
-
-                <div
-                  className={`flex flex-col gap-1.5 max-w-[78%] ${
-                    msg.role === "user" ? "items-end" : "items-start"
-                  }`}
-                >
+                <div className={`flex flex-col gap-1.5 max-w-[78%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
                   <div
-                    className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
-                      msg.role === "user"
-                        ? "text-white rounded-br-sm"
-                        : "bg-gray-100 text-gray-900 rounded-bl-sm"
-                    }`}
-                    style={
-                      msg.role === "user"
-                        ? { backgroundColor: "#C8102E" }
-                        : undefined
-                    }
+                    className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "text-white rounded-br-sm" : "bg-gray-100 text-gray-900 rounded-bl-sm"}`}
+                    style={msg.role === "user" ? { backgroundColor: "#C8102E" } : undefined}
                   >
-                    {msg.content}
+                    {msg.role === "assistant" ? (
+                      <MarkdownContent text={msg.content} />
+                    ) : (
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                    )}
                   </div>
-
-                  {msg.role === "assistant" && msg.intent && msg.model && (
+                  {msg.role === "assistant" && msg.intent && (
                     <div className="flex items-center gap-1.5 px-1">
-                      <span
-                        className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
-                          INTENT_META[msg.intent].color
-                        }`}
-                      >
-                        {INTENT_META[msg.intent].label}
+                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${INTENT_META[msg.intent]?.color ?? "bg-gray-100 text-gray-600"}`}>
+                        {INTENT_META[msg.intent]?.label ?? msg.intent}
                       </span>
-                      <span className="text-[10px] text-gray-400">
-                        {modelShortName(msg.model)}
-                      </span>
+                      {msg.model && (
+                        <span className="text-[10px] text-gray-400">via {modelShortName(msg.model)}</span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -246,10 +259,7 @@ export default function ChatPage() {
 
           {loading && (
             <div className="flex gap-3 justify-start">
-              <div
-                className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold mt-0.5 select-none"
-                style={{ backgroundColor: "#C8102E" }}
-              >
+              <div className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold mt-0.5 select-none" style={{ backgroundColor: "#C8102E" }}>
                 Cy
               </div>
               <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-2">
@@ -257,17 +267,13 @@ export default function ChatPage() {
               </div>
             </div>
           )}
-
           <div ref={bottomRef} />
         </div>
       </main>
 
-      {/* Input bar */}
+      {/* Input */}
       <div className="border-t border-gray-100 bg-white px-4 py-4 shrink-0">
-        <form
-          onSubmit={handleSubmit}
-          className="max-w-2xl mx-auto flex items-end gap-2"
-        >
+        <form onSubmit={handleSubmit} className="max-w-2xl mx-auto flex items-end gap-2">
           <textarea
             ref={inputRef}
             rows={1}
@@ -278,7 +284,7 @@ export default function ChatPage() {
               e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about ISU policies, courses, or course material…"
+            placeholder="Ask about ISU policies, courses, dining, events…"
             disabled={loading}
             className="flex-1 resize-none rounded-xl border border-gray-200 px-4 py-3 text-sm leading-relaxed focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 disabled:opacity-50 transition-colors placeholder:text-gray-400"
             style={{ minHeight: "48px", maxHeight: "160px" }}
@@ -290,21 +296,23 @@ export default function ChatPage() {
             style={{ backgroundColor: "#C8102E" }}
             aria-label="Send"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className="w-4 h-4"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
               <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
             </svg>
           </button>
         </form>
         <p className="text-center text-[10px] text-gray-400 mt-2">
-          CyGuide may make mistakes. Verify important information with your ISU
-          advisor.
+          CyGuide routes your question to the right AI model. Verify important information with your advisor.
         </p>
       </div>
     </div>
+  );
+}
+
+export default function ChatPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-screen text-gray-400 text-sm">Loading…</div>}>
+      <ChatContent />
+    </Suspense>
   );
 }
