@@ -20,7 +20,8 @@ async function getStudentProfile(userId: string): Promise<StudentProfile> {
       .select("id, name, net_id, major, class_year, gpa")
       .eq("user_id", userId)
       .single();
-    student = retry.data;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    student = retry.data as any;
   }
 
   if (!student) return {};
