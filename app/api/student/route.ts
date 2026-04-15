@@ -70,8 +70,27 @@ export async function POST(req: NextRequest) {
 
     // If new columns don't exist yet, retry without them
     if (studentErr && studentErr.message?.includes("column")) {
-      const { interests, internships, research, ...coreData } = studentData;
-      void interests; void internships; void research;
+      const {
+        interests,
+        internships,
+        research,
+        transcript_summary,
+        transcript_uploaded_at,
+        transcript_file_name,
+        schedule_summary,
+        schedule_uploaded_at,
+        schedule_file_name,
+        ...coreData
+      } = studentData;
+      void interests;
+      void internships;
+      void research;
+      void transcript_summary;
+      void transcript_uploaded_at;
+      void transcript_file_name;
+      void schedule_summary;
+      void schedule_uploaded_at;
+      void schedule_file_name;
       const retry = await supabase
         .from("students")
         .upsert(

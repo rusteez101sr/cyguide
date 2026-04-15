@@ -32,6 +32,11 @@ export interface StudentProfile {
   on_campus?: boolean;
   meal_plan?: string;
   gpa?: string;
+  interests?: string;
+  internships?: string;
+  research?: string;
+  transcript_summary?: string;
+  transcript_uploaded_at?: string;
   courses?: CourseInfo[];
 }
 
@@ -42,7 +47,33 @@ export interface CourseInfo {
   professor_email?: string;
   professor_office?: string;
   professor_office_hours?: string;
+  credits?: number;
   grade?: string;
+  semester?: string;
+  status?: "completed" | "current" | "next" | "planned" | "manual";
+  source?: string;
+}
+
+export interface DegreePlanCourse {
+  code: string;
+  name: string;
+  credits?: number | null;
+  rationale?: string;
+}
+
+export interface DegreePlanSemester {
+  title: string;
+  status: "completed" | "current" | "next" | "planned";
+  credits?: number | null;
+  summary: string;
+  courses: DegreePlanCourse[];
+  milestones: string[];
+}
+
+export interface DegreePlanResult {
+  overview: string;
+  semesters: DegreePlanSemester[];
+  notes: string[];
 }
 
 export interface ChatResponse {
@@ -193,19 +224,43 @@ function buildProfileContext(profile: StudentProfile): string {
   if (profile.gpa) lines.push(`GPA: ${profile.gpa}`);
   if (profile.on_campus !== undefined) lines.push(`On Campus: ${profile.on_campus ? "Yes" : "No"}`);
   if (profile.meal_plan) lines.push(`Meal Plan: ${profile.meal_plan}`);
+  if (profile.interests) lines.push(`Interests: ${profile.interests}`);
+  if (profile.internships) lines.push(`Past Internships: ${profile.internships}`);
+  if (profile.research) lines.push(`Past Research Experience: ${profile.research}`);
   if (profile.advisor_name) {
     const advisorParts = [profile.advisor_name];
     if (profile.advisor_email) advisorParts.push(profile.advisor_email);
     if (profile.advisor_office) advisorParts.push(profile.advisor_office);
     lines.push(`Advisor: ${advisorParts.join(", ")}`);
   }
+  if (profile.transcript_summary) lines.push(`Transcript Summary: ${profile.transcript_summary}`);
   if (profile.courses && profile.courses.length > 0) {
-    lines.push(`Enrolled Courses:`);
-    for (const c of profile.courses) {
-      const parts = [`  • ${c.course_code} — ${c.course_name}`];
-      if (c.professor_name) parts.push(`Prof: ${c.professor_name}`);
-      if (c.grade) parts.push(`Grade: ${c.grade}`);
-      lines.push(parts.join(" | "));
+    const completedCourses = profile.courses.filter((course) => {
+      if (course.status) return course.status === "completed";
+      return Boolean(course.grade);
+    });
+    const currentCourses = profile.courses.filter((course) => !completedCourses.includes(course));
+
+    if (completedCourses.length > 0) {
+      lines.push("Previously Completed Courses:");
+      for (const c of completedCourses) {
+        const parts = [`  • ${c.course_code} — ${c.course_name}`];
+        if (c.semester) parts.push(`Semester: ${c.semester}`);
+        if (c.grade) parts.push(`Grade: ${c.grade}`);
+        if (c.credits) parts.push(`Credits: ${c.credits}`);
+        lines.push(parts.join(" | "));
+      }
+    }
+
+    if (currentCourses.length > 0) {
+      lines.push("Current / Upcoming Courses:");
+      for (const c of currentCourses) {
+        const parts = [`  • ${c.course_code} — ${c.course_name}`];
+        if (c.semester) parts.push(`Semester: ${c.semester}`);
+        if (c.credits) parts.push(`Credits: ${c.credits}`);
+        if (c.professor_name) parts.push(`Prof: ${c.professor_name}`);
+        lines.push(parts.join(" | "));
+      }
     }
   }
   return lines.join("\n");
@@ -285,7 +340,7 @@ Give structured, specific advice using their actual major and year. Use formatte
 
 You help students find professor contact information. Always use the actual data from the student's profile first — never invent contact details.
 
-${profList ? `Known professors from their enrolled courses:\n${profList}\n\nPresent this data directly when asked. Do not say you "don't have access" if the info is listed above.` : "The student has not entered course info yet. Encourage them to add courses in Settings so you can provide accurate professor contacts."}
+${profList ? `Known professors from their enrolled courses:\n${profList}\n\nPresent this data directly when asked. Do not say you "don't have access" if the info is listed above.` : "The student has not entered course info yet. Encourage them to add or upload courses in Academic Planning so you can provide accurate professor contacts."}
 
 Format contact cards clearly with: Name, Email, Office, Office Hours.${extraSection}`;
     }
@@ -475,28 +530,62 @@ export async function routeChat(
   return { reply, model, intent };
 }
 
+function buildDegreePlanPrompt(profile: StudentProfile, profileCtx: string): string {
+  return `Create a visual semester-by-semester academic plan for this Iowa State student.
+
+${profileCtx}
+
+Return ONLY valid JSON matching this exact schema:
+{
+  "overview": "2-4 sentence high-level summary",
+  "semesters": [
+    {
+      "title": "Completed Coursework" | "Current Semester" | "Fall 2026" | "Spring 2027",
+      "status": "completed" | "current" | "next" | "planned",
+      "credits": number | null,
+      "summary": "1-2 sentence summary for that block",
+      "courses": [
+        {
+          "code": "COM S 227",
+          "name": "Object-Oriented Programming",
+          "credits": number | null,
+          "rationale": "short reason this course belongs here"
+        }
+      ],
+      "milestones": ["short milestone", "short milestone"]
+    }
+  ],
+  "notes": ["short note", "short note", "short note"]
+}
+
+Rules:
+- Use the student's transcript summary, previous coursework, current coursework, interests, past internships, and research experience.
+- Do not recommend courses the student has already completed unless you are explicitly listing them in the completed/current sections.
+- The first section should summarize completed coursework already on the transcript.
+- The second section should summarize current or in-progress coursework.
+- Then add the next recommended semesters in sequence.
+- Keep course loads realistic for ISU, typically 12-18 credits.
+- Use actual ISU-style course sequencing when possible, but do not invent exact catalog requirements if uncertain.
+- Make the plan visually scannable: concise summaries, 3-6 courses per future semester, and practical milestones tied to the student's interests.
+- If you do not know an exact course title, use a sensible placeholder like "Major elective" instead of fabricating a specific class.
+- Notes should highlight advising checkpoints, transcript gaps, internship/research alignment, or risks.
+`;
+}
+
+function cleanJsonResponse(raw: string): string {
+  return raw
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
 // Standalone degree planner — always uses GPT-4o
-export async function generateDegreePlan(profile: StudentProfile): Promise<string> {
+export async function generateDegreePlan(profile: StudentProfile): Promise<DegreePlanResult> {
   const openaiKey = process.env.OPENAI_API_KEY;
   if (!openaiKey) throw new Error("OPENAI_API_KEY is not configured");
 
   const profileCtx = buildProfileContext(profile);
-  const prompt = `Generate a detailed semester-by-semester 4-year academic plan for this ISU student.
-
-${profileCtx}
-
-Create a realistic plan that:
-1. Completes all major requirements for their program
-2. Includes general education requirements
-3. Sequences prerequisites correctly
-4. Balances credit load (12–18 credits per semester)
-5. Leaves room for electives and minors
-
-Format as a structured plan with each semester on its own section:
-**[Year] — [Semester]** (X credits)
-- COURSE_CODE: Course Name (X credits)
-
-After the plan, add a "Key Notes" section with important considerations.`;
+  const prompt = buildDegreePlanPrompt(profile, profileCtx);
 
   const response = await fetch(OPENAI_API_URL, {
     method: "POST",
@@ -514,5 +603,17 @@ After the plan, add a "Key Notes" section with important considerations.`;
 
   if (!response.ok) throw new Error("Degree plan generation failed");
   const data = await response.json();
-  return data.choices?.[0]?.message?.content ?? "";
+  const raw = data.choices?.[0]?.message?.content ?? "";
+  const cleaned = cleanJsonResponse(raw);
+
+  try {
+    const parsed = JSON.parse(cleaned) as DegreePlanResult;
+    return {
+      overview: parsed.overview ?? "",
+      semesters: Array.isArray(parsed.semesters) ? parsed.semesters : [],
+      notes: Array.isArray(parsed.notes) ? parsed.notes : [],
+    };
+  } catch {
+    throw new Error("Degree plan response could not be parsed");
+  }
 }

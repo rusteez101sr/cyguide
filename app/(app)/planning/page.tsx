@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, FormEvent, ChangeEvent } from "react";
 import Link from "next/link";
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
@@ -18,6 +18,8 @@ interface Course {
   credits: number;
   grade?: string;
   semester: string;
+  status?: "completed" | "current" | "next" | "planned" | "manual";
+  source?: string;
 }
 
 interface Student {
@@ -32,6 +34,37 @@ interface Student {
   interests?: string;
   internships?: string;
   research?: string;
+  transcript_summary?: string;
+  transcript_uploaded_at?: string;
+  transcript_file_name?: string;
+  schedule_summary?: string;
+  schedule_uploaded_at?: string;
+  schedule_file_name?: string;
+}
+
+type CourseStatus = "completed" | "current" | "next" | "planned" | "manual";
+type DocumentType = "transcript" | "schedule";
+
+interface DegreePlanCourse {
+  code: string;
+  name: string;
+  credits?: number | null;
+  rationale?: string;
+}
+
+interface DegreePlanSemester {
+  title: string;
+  status: "completed" | "current" | "next" | "planned";
+  credits?: number | null;
+  summary: string;
+  courses: DegreePlanCourse[];
+  milestones: string[];
+}
+
+interface DegreePlanResult {
+  overview: string;
+  semesters: DegreePlanSemester[];
+  notes: string[];
 }
 
 interface ResearchSource {
@@ -51,6 +84,16 @@ interface QuestionnaireFieldProps {
   placeholder: string;
   type?: string;
   helper?: string;
+}
+
+interface UploadPanelProps {
+  documentType: DocumentType;
+  title: string;
+  description: string;
+  helper: string;
+  inputKey: string;
+  busy: boolean;
+  onSelect: (event: ChangeEvent<HTMLInputElement>, documentType: DocumentType) => void;
 }
 
 // ─── Sub-components (defined at module scope to avoid remount-on-render) ──────
@@ -76,7 +119,32 @@ function GradeChip({ grade }: { grade?: string }) {
   );
 }
 
-function CourseCard({ course }: { course: Course }) {
+function StatusChip({ status }: { status?: CourseStatus }) {
+  const normalized = status ?? "manual";
+  const styles: Record<CourseStatus, string> = {
+    completed: "bg-emerald-100 text-emerald-700",
+    current: "bg-blue-100 text-blue-700",
+    next: "bg-amber-100 text-amber-700",
+    planned: "bg-violet-100 text-violet-700",
+    manual: "bg-gray-100 text-gray-600",
+  };
+
+  const labels: Record<CourseStatus, string> = {
+    completed: "Completed",
+    current: "Current",
+    next: "Next",
+    planned: "Planned",
+    manual: "Manual",
+  };
+
+  return (
+    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${styles[normalized]}`}>
+      {labels[normalized]}
+    </span>
+  );
+}
+
+function CourseCard({ course, onRemove }: { course: Course; onRemove?: (courseId: string) => void }) {
   const [copied, setCopied] = useState(false);
   function copy(text: string) {
     navigator.clipboard.writeText(text);
@@ -90,8 +158,10 @@ function CourseCard({ course }: { course: Course }) {
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-semibold text-red-600 uppercase tracking-wide">{course.course_code}</span>
             <span className="text-xs text-gray-400">{course.credits} cr</span>
+            <StatusChip status={course.status} />
           </div>
           <h3 className="text-sm font-semibold text-gray-900">{course.course_name}</h3>
+          <p className="text-xs text-gray-400 mt-1">{course.semester}</p>
         </div>
         <GradeChip grade={course.grade} />
       </div>
@@ -126,6 +196,15 @@ function CourseCard({ course }: { course: Course }) {
         >
           Ask CyGuide
         </Link>
+        {onRemove && (
+          <button
+            type="button"
+            onClick={() => onRemove(course.id)}
+            className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:border-red-200 hover:text-red-600 transition-colors"
+          >
+            Remove
+          </button>
+        )}
       </div>
     </div>
   );
@@ -174,6 +253,35 @@ function Spinner({ className = "w-4 h-4" }: { className?: string }) {
   );
 }
 
+function UploadPanel({ documentType, title, description, helper, inputKey, busy, onSelect }: UploadPanelProps) {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 p-5">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+          <p className="text-xs text-gray-500 mt-1">{description}</p>
+        </div>
+        <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-gray-100 text-gray-500 uppercase tracking-wide">
+          {documentType}
+        </span>
+      </div>
+      <p className="text-[11px] text-gray-400 mb-4">{helper}</p>
+      <label className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 px-4 py-4 text-sm font-medium text-gray-600 hover:border-red-300 hover:text-red-600 transition-colors cursor-pointer">
+        {busy ? <Spinner /> : null}
+        <span>{busy ? "Scanning file…" : `Choose ${documentType} file`}</span>
+        <input
+          key={inputKey}
+          type="file"
+          accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.csv"
+          className="sr-only"
+          disabled={busy}
+          onChange={(event) => onSelect(event, documentType)}
+        />
+      </label>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PlanningPage() {
@@ -182,7 +290,7 @@ export default function PlanningPage() {
   const [loading, setLoading] = useState(true);
 
   // Degree plan tab
-  const [degreePlan, setDegreePlan] = useState("");
+  const [degreePlan, setDegreePlan] = useState<DegreePlanResult | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState("");
 
@@ -203,6 +311,23 @@ export default function PlanningPage() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState("");
 
+  // Courses tab
+  const [courseForm, setCourseForm] = useState({
+    course_code: "",
+    course_name: "",
+    credits: "3",
+    semester: "Spring 2026",
+    grade: "",
+    status: "current" as CourseStatus,
+  });
+  const [courseSaving, setCourseSaving] = useState(false);
+  const [courseError, setCourseError] = useState("");
+  const [courseNotice, setCourseNotice] = useState("");
+  const [uploadingType, setUploadingType] = useState<DocumentType | null>(null);
+  const [uploadMessage, setUploadMessage] = useState("");
+  const [uploadError, setUploadError] = useState("");
+  const [uploadInputSeed, setUploadInputSeed] = useState(0);
+
   // Research tab
   const [researchMode, setResearchMode] = useState<"find" | "check">("find");
   const [researchTopic, setResearchTopic] = useState("");
@@ -217,30 +342,183 @@ export default function PlanningPage() {
   const [bibError, setBibError] = useState("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
 
+  function hydrateStudent(data: { student: Student | null; courses?: Course[] }) {
+    setStudent(data.student);
+    setCourses(data.courses ?? []);
+
+    if (data.student) {
+      setProfileForm({
+        advisor_name: data.student.advisor_name ?? "",
+        advisor_email: data.student.advisor_email ?? "",
+        advisor_phone: data.student.advisor_phone ?? "",
+        advisor_office: data.student.advisor_office ?? "",
+        gpa: data.student.gpa ?? "",
+        major: data.student.major ?? "",
+        interests: data.student.interests ?? "",
+        internships: data.student.internships ?? "",
+        research: data.student.research ?? "",
+      });
+    }
+  }
+
+  async function loadStudentProfile() {
+    const response = await fetch("/api/student", { cache: "no-store" });
+    const data = await response.json();
+    hydrateStudent(data);
+  }
+
   useEffect(() => {
-    fetch("/api/student", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((data) => {
-        setStudent(data.student);
-        setCourses(data.courses ?? []);
-        if (data.student) {
-          setProfileForm({
-            advisor_name: data.student.advisor_name ?? "",
-            advisor_email: data.student.advisor_email ?? "",
-            advisor_phone: data.student.advisor_phone ?? "",
-            advisor_office: data.student.advisor_office ?? "",
-            gpa: data.student.gpa ?? "",
-            major: data.student.major ?? "",
-            interests: data.student.interests ?? "",
-            internships: data.student.internships ?? "",
-            research: data.student.research ?? "",
-          });
-        }
+    loadStudentProfile()
+      .catch(() => {
+        setStudent(null);
+        setCourses([]);
       })
       .finally(() => setLoading(false));
   }, []);
 
+  function normalizeCourseCode(value: string) {
+    return value.replace(/\s+/g, " ").trim().toUpperCase();
+  }
+
+  function inferCourseStatus(course: Course): CourseStatus {
+    if (course.status) return course.status;
+    return course.grade ? "completed" : "current";
+  }
+
+  function serializeCourse(course: Course) {
+    return {
+      course_code: normalizeCourseCode(course.course_code),
+      course_name: course.course_name.trim() || normalizeCourseCode(course.course_code),
+      professor_name: course.professor_name,
+      professor_email: course.professor_email,
+      professor_office: course.professor_office,
+      professor_office_hours: course.professor_office_hours,
+      credits: course.credits,
+      grade: course.grade?.trim() || undefined,
+      semester: course.semester.trim(),
+      status: inferCourseStatus(course),
+      source: course.source ?? "manual",
+    };
+  }
+
+  async function persistCourses(nextCourses: Course[], successMessage: string) {
+    setCourseSaving(true);
+    setCourseError("");
+    setCourseNotice("");
+
+    try {
+      const payload = {
+        ...(student ?? {}),
+        ...profileForm,
+        onboarding_complete: true,
+        courses: nextCourses.map(serializeCourse),
+      };
+
+      const res = await fetch("/api/student", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Failed to save courses");
+
+      setCourses(nextCourses);
+      if (data.student) {
+        setStudent((prev) => ({ ...(prev ?? {}), ...(data.student as Student) }));
+      }
+      setCourseNotice(successMessage);
+      setTimeout(() => setCourseNotice(""), 4000);
+    } catch (err) {
+      setCourseError(err instanceof Error ? err.message : "Failed to save courses");
+    } finally {
+      setCourseSaving(false);
+    }
+  }
+
+  async function addCourse(e: FormEvent) {
+    e.preventDefault();
+
+    const courseCode = normalizeCourseCode(courseForm.course_code);
+    const courseName = courseForm.course_name.trim() || courseCode;
+    if (!courseCode) {
+      setCourseError("Add a course code before saving.");
+      return;
+    }
+
+    const nextCourse: Course = {
+      id: `manual-${Date.now()}`,
+      course_code: courseCode,
+      course_name: courseName,
+      credits: Number(courseForm.credits) || 3,
+      semester: courseForm.semester.trim() || "Spring 2026",
+      grade: courseForm.status === "completed" ? courseForm.grade.trim() || undefined : undefined,
+      status: courseForm.status,
+      source: "manual",
+    };
+
+    await persistCourses([...courses, nextCourse], `${courseCode} added to your planning record.`);
+    setCourseForm((prev) => ({
+      ...prev,
+      course_code: "",
+      course_name: "",
+      credits: "3",
+      grade: "",
+      status: "current",
+    }));
+  }
+
+  async function removeCourse(courseId: string) {
+    const nextCourses = courses.filter((course) => course.id !== courseId);
+    await persistCourses(nextCourses, "Course removed.");
+  }
+
+  async function handleUploadSelect(event: ChangeEvent<HTMLInputElement>, documentType: DocumentType) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploadingType(documentType);
+    setUploadError("");
+    setUploadMessage("");
+    setCourseError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("documentType", documentType);
+      formData.append("file", file);
+
+      const res = await fetch("/api/student/academic-record", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Upload failed");
+
+      hydrateStudent({
+        student: data.student ?? null,
+        courses: data.courses ?? [],
+      });
+      setDegreePlan(null);
+      setPlanError("");
+      setUploadMessage(data.parsed?.summary ?? `${documentType} scanned successfully.`);
+      if (documentType === "transcript") {
+        setActiveTab("plan");
+      }
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploadingType(null);
+      setUploadInputSeed((value) => value + 1);
+    }
+  }
+
   async function generatePlan() {
+    if (!student?.transcript_summary) {
+      setPlanError("Upload a transcript in the Courses tab first so CyGuide can map your completed coursework.");
+      setActiveTab("courses");
+      return;
+    }
+
     setPlanLoading(true);
     setPlanError("");
     try {
@@ -251,7 +529,7 @@ export default function PlanningPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setDegreePlan(data.plan);
+      setDegreePlan(data.plan ?? null);
       setActiveTab("plan");
     } catch (err) {
       setPlanError(err instanceof Error ? err.message : "Failed to generate plan");
@@ -288,7 +566,7 @@ export default function PlanningPage() {
       const res = await fetch("/api/student", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...profileForm, onboarding_complete: true }),
+        body: JSON.stringify({ ...(student ?? {}), ...profileForm, onboarding_complete: true }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -366,7 +644,13 @@ export default function PlanningPage() {
     setTimeout(() => setCopiedId(null), 2000);
   }
 
-  const totalCredits = courses.reduce((sum, c) => sum + (c.credits ?? 0), 0);
+  const currentCourses = courses.filter((course) => {
+    const status = inferCourseStatus(course);
+    return status === "current" || status === "next" || status === "planned";
+  });
+  const completedCourses = courses.filter((course) => inferCourseStatus(course) === "completed");
+  const totalCredits = currentCourses.reduce((sum, c) => sum + (c.credits ?? 0), 0);
+  const hasTranscript = Boolean(student?.transcript_summary?.trim());
   const questionnaireCompletion = [
     profileForm.advisor_name, profileForm.gpa, profileForm.major,
     profileForm.interests, profileForm.internships, profileForm.research,
@@ -388,6 +672,7 @@ export default function PlanningPage() {
               ? `${student.major} · ${student.class_year}`
               : student.class_year || "Build your plan profile"}
             {totalCredits > 0 ? ` · ${totalCredits} credits this semester` : ""}
+            {hasTranscript ? " · Transcript on file" : ""}
           </p>
         )}
       </div>
@@ -397,6 +682,7 @@ export default function PlanningPage() {
         {(["courses", "plan", "whatif", "questionnaire", "research"] as const).map((tab) => (
           <button
             key={tab}
+            type="button"
             onClick={() => setActiveTab(tab)}
             className={`shrink-0 text-xs font-medium py-2 px-3 rounded-lg transition-colors ${
               activeTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
@@ -409,37 +695,209 @@ export default function PlanningPage() {
 
       {/* ── Courses tab ───────────────────────────────────────────────────────── */}
       {activeTab === "courses" && (
-        <div>
+        <div className="space-y-5">
           {loading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {[...Array(4)].map((_, i) => (
-                <div key={i} className="bg-white rounded-2xl border border-gray-100 h-36 animate-pulse" />
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="bg-white rounded-2xl border border-gray-100 h-32 animate-pulse" />
               ))}
-            </div>
-          ) : courses.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center">
-              <p className="text-gray-500 text-sm mb-2">No current courses found for your profile yet.</p>
-              <p className="text-xs text-gray-400">Fill out the Questionnaire tab and generate planning scenarios.</p>
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {courses.map((c) => <CourseCard key={c.id} course={c} />)}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-white rounded-2xl border border-gray-100 p-5">
+                  <p className="text-xs text-gray-400">Current / upcoming courses</p>
+                  <p className="text-2xl font-semibold text-gray-900 mt-1">{currentCourses.length}</p>
+                  <p className="text-xs text-gray-500 mt-2">{totalCredits} credits across your active plan</p>
+                </div>
+                <div className="bg-white rounded-2xl border border-gray-100 p-5">
+                  <p className="text-xs text-gray-400">Completed history</p>
+                  <p className="text-2xl font-semibold text-gray-900 mt-1">{completedCourses.length}</p>
+                  <p className="text-xs text-gray-500 mt-2">
+                    {hasTranscript ? "Transcript-backed history ready for planning" : "Upload a transcript to capture prior coursework"}
+                  </p>
+                </div>
+                <div className="bg-white rounded-2xl border border-gray-100 p-5">
+                  <p className="text-xs text-gray-400">Degree plan input</p>
+                  <p className="text-2xl font-semibold text-gray-900 mt-1">{hasTranscript ? "Ready" : "Needs transcript"}</p>
+                  <p className="text-xs text-gray-500 mt-2">CyGuide uses your transcript plus interests to build the visual plan.</p>
+                </div>
               </div>
-              <div className="mt-6 bg-white rounded-2xl border border-gray-100 p-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-xs text-gray-400">Current GPA</p>
-                  <p className="text-2xl font-semibold text-gray-900">{student?.gpa || "Add it in Questionnaire"}</p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <UploadPanel
+                  documentType="transcript"
+                  title="Upload transcript"
+                  description="Use a PDF, image, TXT, or CSV transcript. CyGuide will scan completed and in-progress courses automatically."
+                  helper="Required for the degree plan. Transcript uploads replace your current course history with the scanned record."
+                  inputKey={`transcript-${uploadInputSeed}`}
+                  busy={uploadingType === "transcript"}
+                  onSelect={handleUploadSelect}
+                />
+                <UploadPanel
+                  documentType="schedule"
+                  title="Upload class schedule"
+                  description="Use a current-semester schedule to load active classes without retyping them."
+                  helper="Schedule uploads refresh only your current classes and keep completed history intact."
+                  inputKey={`schedule-${uploadInputSeed}`}
+                  busy={uploadingType === "schedule"}
+                  onSelect={handleUploadSelect}
+                />
+              </div>
+
+              {(uploadMessage || uploadError || courseError || courseNotice) && (
+                <div className="space-y-2">
+                  {uploadMessage && <p className="text-sm text-emerald-600">{uploadMessage}</p>}
+                  {courseNotice && <p className="text-sm text-emerald-600">{courseNotice}</p>}
+                  {uploadError && <p className="text-sm text-red-600">{uploadError}</p>}
+                  {courseError && <p className="text-sm text-red-600">{courseError}</p>}
+                </div>
+              )}
+
+              {(student?.transcript_summary || student?.schedule_summary) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {student?.transcript_summary && (
+                    <div className="bg-white rounded-2xl border border-gray-100 p-5">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <h3 className="text-sm font-semibold text-gray-900">Transcript summary</h3>
+                        {student.transcript_uploaded_at && (
+                          <span className="text-[11px] text-gray-400">
+                            {new Date(student.transcript_uploaded_at).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-600 leading-relaxed">{student.transcript_summary}</p>
+                    </div>
+                  )}
+                  {student?.schedule_summary && (
+                    <div className="bg-white rounded-2xl border border-gray-100 p-5">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <h3 className="text-sm font-semibold text-gray-900">Schedule summary</h3>
+                        {student.schedule_uploaded_at && (
+                          <span className="text-[11px] text-gray-400">
+                            {new Date(student.schedule_uploaded_at).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-600 leading-relaxed">{student.schedule_summary}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <form onSubmit={addCourse} className="bg-white rounded-2xl border border-gray-100 p-5">
+                <div className="flex flex-col gap-1 mb-4">
+                  <h3 className="text-sm font-semibold text-gray-900">Add a course manually</h3>
+                  <p className="text-xs text-gray-500">
+                    Use this when you want to add a course directly instead of uploading a transcript or schedule.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <QuestionnaireInput
+                    label="Course code"
+                    value={courseForm.course_code}
+                    onChange={(value) => setCourseForm((prev) => ({ ...prev, course_code: value }))}
+                    placeholder="COM S 227"
+                  />
+                  <QuestionnaireInput
+                    label="Course name"
+                    value={courseForm.course_name}
+                    onChange={(value) => setCourseForm((prev) => ({ ...prev, course_name: value }))}
+                    placeholder="Object-Oriented Programming"
+                  />
+                  <QuestionnaireInput
+                    label="Credits"
+                    value={courseForm.credits}
+                    onChange={(value) => setCourseForm((prev) => ({ ...prev, credits: value }))}
+                    placeholder="3"
+                    type="number"
+                  />
+                  <QuestionnaireInput
+                    label="Semester"
+                    value={courseForm.semester}
+                    onChange={(value) => setCourseForm((prev) => ({ ...prev, semester: value }))}
+                    placeholder="Spring 2026"
+                  />
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1.5">Status</label>
+                    <select
+                      value={courseForm.status}
+                      onChange={(event) => setCourseForm((prev) => ({ ...prev, status: event.target.value as CourseStatus }))}
+                      className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
+                    >
+                      <option value="current">Current / in progress</option>
+                      <option value="completed">Completed already</option>
+                      <option value="planned">Planned for later</option>
+                    </select>
+                  </div>
+                  <QuestionnaireInput
+                    label="Grade"
+                    value={courseForm.grade}
+                    onChange={(value) => setCourseForm((prev) => ({ ...prev, grade: value }))}
+                    placeholder={courseForm.status === "completed" ? "A-" : "Optional"}
+                    helper={courseForm.status === "completed" ? "Add a final grade if you have one." : "Only needed for completed courses."}
+                  />
                 </div>
                 <button
-                  onClick={generatePlan}
-                  disabled={planLoading}
-                  className="text-sm px-4 py-2 rounded-xl text-white disabled:opacity-50 transition-opacity hover:opacity-90"
+                  type="submit"
+                  disabled={courseSaving}
+                  className="mt-4 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-medium disabled:opacity-50"
                   style={{ backgroundColor: "#C8102E" }}
                 >
-                  {planLoading ? "Generating…" : "Generate Degree Plan →"}
+                  {courseSaving ? <><Spinner /> Saving…</> : "Save course"}
                 </button>
-              </div>
+              </form>
+
+              {courses.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center">
+                  <p className="text-gray-500 text-sm mb-2">No courses in your planning record yet.</p>
+                  <p className="text-xs text-gray-400">Add a course manually or upload a transcript/class schedule above.</p>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  <div>
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-900">Current and upcoming courses</h3>
+                        <p className="text-xs text-gray-500">These courses shape the next degree-plan recommendations.</p>
+                      </div>
+                      <span className="text-xs text-gray-400">{currentCourses.length} course{currentCourses.length === 1 ? "" : "s"}</span>
+                    </div>
+                    {currentCourses.length === 0 ? (
+                      <div className="bg-white rounded-2xl border border-gray-100 p-6 text-sm text-gray-500">
+                        No active courses yet. Upload a class schedule or add your semester manually.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {currentCourses.map((course) => (
+                          <CourseCard key={course.id} course={{ ...course, status: inferCourseStatus(course) }} onRemove={removeCourse} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-900">Completed coursework</h3>
+                        <p className="text-xs text-gray-500">Transcript-backed history helps CyGuide avoid recommending repeats.</p>
+                      </div>
+                      <span className="text-xs text-gray-400">{completedCourses.length} course{completedCourses.length === 1 ? "" : "s"}</span>
+                    </div>
+                    {completedCourses.length === 0 ? (
+                      <div className="bg-white rounded-2xl border border-gray-100 p-6 text-sm text-gray-500">
+                        Upload a transcript to populate completed courses automatically.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {completedCourses.map((course) => (
+                          <CourseCard key={course.id} course={{ ...course, status: inferCourseStatus(course) }} onRemove={removeCourse} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -447,49 +905,161 @@ export default function PlanningPage() {
 
       {/* ── Degree Plan tab ───────────────────────────────────────────────────── */}
       {activeTab === "plan" && (
-        <div>
-          {!degreePlan && !planLoading && (
-            <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center">
-              <div className="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-4">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-6 h-6 text-gray-400">
-                  <path d="M10.75 16.82A7.462 7.462 0 0115 15.5c.71 0 1.396.098 2.046.282A.75.75 0 0018 15.06v-11a.75.75 0 00-.546-.721A9.006 9.006 0 0015 3a8.963 8.963 0 00-4.25 1.065V16.82zM9.25 4.065A8.963 8.963 0 005 3c-.85 0-1.673.118-2.454.339A.75.75 0 002 4.06v11a.75.75 0 00.954.721A7.506 7.506 0 015 15.5c1.579 0 3.042.487 4.25 1.32V4.065z" />
-                </svg>
+        <div className="space-y-5">
+          {!hasTranscript && !planLoading && (
+            <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr] gap-5">
+              <div className="bg-white rounded-2xl border border-gray-100 p-8">
+                <div className="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-6 h-6 text-gray-400">
+                    <path d="M10.75 16.82A7.462 7.462 0 0115 15.5c.71 0 1.396.098 2.046.282A.75.75 0 0018 15.06v-11a.75.75 0 00-.546-.721A9.006 9.006 0 0015 3a8.963 8.963 0 00-4.25 1.065V16.82zM9.25 4.065A8.963 8.963 0 005 3c-.85 0-1.673.118-2.454.339A.75.75 0 002 4.06v11a.75.75 0 00.954.721A7.506 7.506 0 015 15.5c1.579 0 3.042.487 4.25 1.32V4.065z" />
+                  </svg>
+                </div>
+                <h2 className="text-base font-semibold text-gray-900 mb-2">Transcript required for the visual degree plan</h2>
+                <p className="text-sm text-gray-500 leading-relaxed mb-4">
+                  Upload your transcript first so CyGuide can distinguish completed coursework, in-progress classes, and remaining space for interests-driven recommendations.
+                </p>
+                {planError && <p className="text-sm text-red-500">{planError}</p>}
               </div>
-              <h2 className="text-base font-semibold text-gray-900 mb-2">Generate your 4-year plan</h2>
-              <p className="text-sm text-gray-500 mb-5 max-w-sm mx-auto">
-                CyGuide will create a personalized semester-by-semester plan based on your questionnaire and current progress.
-              </p>
-              {planError && <p className="text-sm text-red-500 mb-4">{planError}</p>}
-              <button
-                onClick={generatePlan}
-                disabled={planLoading}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-sm font-medium disabled:opacity-50"
-                style={{ backgroundColor: "#C8102E" }}
-              >
-                {planLoading ? <><Spinner /> Generating with GPT-4o…</> : "Generate My Degree Plan"}
-              </button>
+              <UploadPanel
+                documentType="transcript"
+                title="Upload transcript"
+                description="The degree planner scans this file before it generates your semester cards."
+                helper="Accepted formats: PDF, image, TXT, CSV."
+                inputKey={`plan-transcript-${uploadInputSeed}`}
+                busy={uploadingType === "transcript"}
+                onSelect={handleUploadSelect}
+              />
             </div>
           )}
+
+          {hasTranscript && !degreePlan && !planLoading && (
+            <div className="bg-white rounded-2xl border border-gray-100 p-8">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-2xl">
+                  <h2 className="text-base font-semibold text-gray-900 mb-2">Generate your visual degree plan</h2>
+                  <p className="text-sm text-gray-500 leading-relaxed">
+                    CyGuide will use your transcript, current courses, interests, internships, and research background to lay out completed work, your active semester, and the next recommended terms.
+                  </p>
+                  {student?.transcript_summary && (
+                    <div className="mt-4 rounded-xl bg-gray-50 border border-gray-100 p-4">
+                      <p className="text-xs font-semibold text-gray-700 mb-1">Transcript snapshot</p>
+                      <p className="text-sm text-gray-600 leading-relaxed">{student.transcript_summary}</p>
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={generatePlan}
+                  disabled={planLoading}
+                  className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-white text-sm font-medium disabled:opacity-50 shrink-0"
+                  style={{ backgroundColor: "#C8102E" }}
+                >
+                  {planLoading ? <><Spinner /> Generating…</> : "Generate visual plan"}
+                </button>
+              </div>
+              {planError && <p className="text-sm text-red-500 mt-4">{planError}</p>}
+            </div>
+          )}
+
           {planLoading && (
             <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center">
               <Spinner className="w-8 h-8 text-red-500 mx-auto mb-4" />
-              <p className="text-sm text-gray-500">GPT-4o is generating your degree plan…</p>
+              <p className="text-sm text-gray-500">GPT-4o is mapping completed, current, and recommended semesters…</p>
             </div>
           )}
+
           {degreePlan && (
-            <div className="bg-white rounded-2xl border border-gray-100 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base font-semibold text-gray-900">Your Degree Plan</h2>
-                <button onClick={generatePlan} disabled={planLoading} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
-                  Regenerate
-                </button>
+            <>
+              <div className="bg-white rounded-2xl border border-gray-100 p-6">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <div>
+                    <h2 className="text-base font-semibold text-gray-900">Your visual degree plan</h2>
+                    <p className="text-sm text-gray-500 mt-1">Built from your transcript, questionnaire, and current coursework.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={generatePlan}
+                    disabled={planLoading}
+                    className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    Regenerate
+                  </button>
+                </div>
+                <p className="text-sm text-gray-700 leading-relaxed">{degreePlan.overview}</p>
               </div>
-              <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap leading-relaxed text-sm">{degreePlan}</div>
-              <div className="mt-4 pt-4 border-t border-gray-50 text-xs text-gray-400 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />
-                Generated by GPT-4o · Always verify with your academic advisor
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {degreePlan.semesters.map((semester, index) => {
+                  const statusStyles: Record<DegreePlanSemester["status"], string> = {
+                    completed: "border-emerald-200 bg-emerald-50",
+                    current: "border-blue-200 bg-blue-50",
+                    next: "border-amber-200 bg-amber-50",
+                    planned: "border-violet-200 bg-violet-50",
+                  };
+
+                  return (
+                    <div key={`${semester.title}-${index}`} className={`rounded-2xl border p-5 ${statusStyles[semester.status]}`}>
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-gray-500">{semester.status}</p>
+                          <h3 className="text-sm font-semibold text-gray-900 mt-1">{semester.title}</h3>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-gray-500">Credits</p>
+                          <p className="text-sm font-semibold text-gray-900">{semester.credits ?? "TBD"}</p>
+                        </div>
+                      </div>
+                      <p className="text-sm text-gray-600 leading-relaxed mb-4">{semester.summary}</p>
+
+                      <div className="space-y-2">
+                        {semester.courses.map((course, courseIndex) => (
+                          <div key={`${course.code}-${courseIndex}`} className="rounded-xl bg-white/80 border border-white px-3 py-2.5">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-semibold text-red-600 uppercase tracking-wide">{course.code}</p>
+                                <p className="text-sm font-medium text-gray-900">{course.name}</p>
+                              </div>
+                              <span className="text-xs text-gray-500">{course.credits ?? "?"} cr</span>
+                            </div>
+                            {course.rationale && <p className="text-xs text-gray-500 mt-2 leading-relaxed">{course.rationale}</p>}
+                          </div>
+                        ))}
+                      </div>
+
+                      {semester.milestones?.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-white/70">
+                          <p className="text-xs font-semibold text-gray-700 mb-2">Milestones</p>
+                          <ul className="space-y-1">
+                            {semester.milestones.map((milestone, milestoneIndex) => (
+                              <li key={`${milestone}-${milestoneIndex}`} className="text-xs text-gray-600">
+                                • {milestone}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            </div>
+
+              {degreePlan.notes.length > 0 && (
+                <div className="bg-white rounded-2xl border border-gray-100 p-6">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">Key notes</h3>
+                  <ul className="space-y-2">
+                    {degreePlan.notes.map((note, index) => (
+                      <li key={`${note}-${index}`} className="text-sm text-gray-600">
+                        • {note}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-4 pt-4 border-t border-gray-50 text-xs text-gray-400 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />
+                    Generated by GPT-4o · Verify the final plan with your academic advisor
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

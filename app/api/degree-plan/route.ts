@@ -5,18 +5,41 @@ import { createClient } from "@/lib/supabase-server";
 async function getStudentProfile(userId: string): Promise<StudentProfile> {
   const supabase = await createClient();
 
-  const { data: student } = await supabase
+  let {
+    data: student,
+    error: studentError,
+  } = await supabase
     .from("students")
-    .select("id, name, net_id, major, class_year, gpa")
+    .select("id, name, net_id, major, class_year, gpa, interests, internships, research, advisor_name, advisor_email, advisor_phone, advisor_office, transcript_summary, transcript_uploaded_at")
     .eq("user_id", userId)
     .single();
 
+  if (studentError && studentError.message?.includes("column")) {
+    const retry = await supabase
+      .from("students")
+      .select("id, name, net_id, major, class_year, gpa")
+      .eq("user_id", userId)
+      .single();
+    student = retry.data;
+  }
+
   if (!student) return {};
 
-  const { data: courseData } = await supabase
+  let {
+    data: courseData,
+    error: courseError,
+  } = await supabase
     .from("student_courses")
-    .select("course_code, course_name, professor_name, grade")
+    .select("course_code, course_name, professor_name, professor_email, professor_office, professor_office_hours, grade, credits, semester, status, source")
     .eq("student_id", student.id);
+
+  if (courseError && courseError.message?.includes("column")) {
+    const retry = await supabase
+      .from("student_courses")
+      .select("course_code, course_name, professor_name, professor_email, professor_office, professor_office_hours, grade, credits, semester")
+      .eq("student_id", student.id);
+    courseData = retry.data;
+  }
 
   const courses: CourseInfo[] = courseData ?? [];
 
@@ -26,6 +49,15 @@ async function getStudentProfile(userId: string): Promise<StudentProfile> {
     major: student.major,
     class_year: student.class_year,
     gpa: student.gpa,
+    interests: "interests" in student ? student.interests : undefined,
+    internships: "internships" in student ? student.internships : undefined,
+    research: "research" in student ? student.research : undefined,
+    advisor_name: "advisor_name" in student ? student.advisor_name : undefined,
+    advisor_email: "advisor_email" in student ? student.advisor_email : undefined,
+    advisor_phone: "advisor_phone" in student ? student.advisor_phone : undefined,
+    advisor_office: "advisor_office" in student ? student.advisor_office : undefined,
+    transcript_summary: "transcript_summary" in student ? student.transcript_summary : undefined,
+    transcript_uploaded_at: "transcript_uploaded_at" in student ? student.transcript_uploaded_at : undefined,
     courses,
   };
 }
@@ -46,10 +78,6 @@ export async function POST(req: NextRequest) {
 
     // If there's a what-if scenario, append it to the profile context
     if (scenario) {
-      const plan = await generateDegreePlan({
-        ...profile,
-      });
-      // Re-run with scenario context
       const { routeChat } = await import("@/lib/router");
       const result = await routeChat(
         `What-if scenario: ${scenario}\n\nGiven my profile above, analyze this scenario and explain the impact on my degree plan.`,

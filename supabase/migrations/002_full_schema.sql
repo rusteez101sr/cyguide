@@ -26,6 +26,12 @@ create table if not exists public.students (
   interests text,
   internships text,
   research text,
+  transcript_summary text,
+  transcript_uploaded_at timestamptz,
+  transcript_file_name text,
+  schedule_summary text,
+  schedule_uploaded_at timestamptz,
+  schedule_file_name text,
   canvas_ical_url text,
   onboarding_complete boolean default false,
   created_at timestamptz default now(),
@@ -52,6 +58,8 @@ create table if not exists public.student_courses (
   credits integer default 3,
   semester text default 'Spring 2026',
   grade text,
+  status text default 'manual' check (status in ('completed', 'current', 'next', 'planned', 'manual')),
+  source text default 'manual',
   created_at timestamptz default now()
 );
 
