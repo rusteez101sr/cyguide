@@ -211,7 +211,7 @@ function ChatContent() {
               <div>
                 <h2 className="text-2xl font-semibold text-gray-900">Hi, I&apos;m CyGuide</h2>
                 <p className="text-gray-500 mt-1 text-sm max-w-sm">
-                  Your AI companion for ISU policies, academic planning, dining, events, and more.
+                  Your AI companion for ISU policies, academic planning, events, and more.
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg mt-2">
@@ -287,7 +287,7 @@ function ChatContent() {
               e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about ISU policies, courses, dining, events…"
+            placeholder="Ask about ISU policies, courses, events, or get support…"
             disabled={loading}
             autoComplete="off"
             autoCorrect="off"

@@ -1,42 +1,6 @@
 import { createClient } from "@/lib/supabase-server";
+import { parseIcal, getUpcoming, type Assignment } from "@/lib/ical";
 import Link from "next/link";
-
-interface Assignment {
-  id: string;
-  name: string;
-  due_at: string;
-  course_name: string;
-  url: string;
-}
-
-function parseIcal(text: string): Assignment[] {
-  const events: Assignment[] = [];
-  const blocks = text.split("BEGIN:VEVENT");
-  for (let i = 1; i < blocks.length; i++) {
-    const block = blocks[i];
-    const get = (key: string) => {
-      const match = block.match(new RegExp(`${key}[^:]*:([^\r\n]+)`));
-      return match ? match[1].trim() : "";
-    };
-    const dtstart = get("DTSTART");
-    const summary = get("SUMMARY");
-    const url = get("URL");
-    const uid = get("UID");
-    if (!dtstart || !summary) continue;
-    let due: Date;
-    if (dtstart.length === 8) {
-      due = new Date(`${dtstart.slice(0, 4)}-${dtstart.slice(4, 6)}-${dtstart.slice(6, 8)}`);
-    } else {
-      due = new Date(dtstart.replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?/, "$1-$2-$3T$4:$5:$6Z"));
-    }
-    if (isNaN(due.getTime())) continue;
-    const courseMatch = summary.match(/\(([^)]+)\)\s*$/);
-    const course_name = courseMatch ? courseMatch[1] : "";
-    const name = summary.replace(/\s*\([^)]+\)\s*$/, "").trim();
-    events.push({ id: uid, name, due_at: due.toISOString(), course_name, url });
-  }
-  return events;
-}
 
 function urgencyLabel(dueAt: string): { label: string; color: string } {
   const diffMs = new Date(dueAt).getTime() - Date.now();
@@ -50,18 +14,14 @@ function urgencyLabel(dueAt: string): { label: string; color: string } {
   };
 }
 
-async function getUpcomingAssignments(icalUrl: string | null | undefined): Promise<Assignment[]> {
+// Returns ALL upcoming assignments (60 days). Callers slice for display.
+async function fetchCanvasAssignments(icalUrl: string | null | undefined): Promise<Assignment[]> {
   if (!icalUrl) return [];
   try {
     const res = await fetch(icalUrl, { next: { revalidate: 300 } });
     if (!res.ok) return [];
     const text = await res.text();
-    const all = parseIcal(text);
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    return all
-      .filter((a) => new Date(a.due_at) > cutoff)
-      .sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime())
-      .slice(0, 5);
+    return getUpcoming(parseIcal(text), 60);
   } catch {
     return [];
   }
@@ -85,21 +45,32 @@ export default async function DashboardPage() {
     .single();
 
   const icalUrl = student?.canvas_ical_url ?? legacyProfile?.canvas_ical_url;
-  const assignments = await getUpcomingAssignments(icalUrl);
+  // Fetch all upcoming assignments — stats come from the full set, display is sliced to 5
+  const allAssignments = await fetchCanvasAssignments(icalUrl);
   const hasCanvas = !!icalUrl;
 
   const firstName = student?.name?.split(" ")[0] ?? user!.email?.split("@")[0] ?? "there";
-  const overdue = assignments.filter((a) => new Date(a.due_at) < new Date());
-  const dueToday = assignments.filter((a) => {
-    const diff = new Date(a.due_at).getTime() - Date.now();
-    return diff > 0 && diff < 24 * 60 * 60 * 1000;
-  });
+  const now = new Date();
+  const todayStr = now.toDateString();
 
-  // Upcoming ISU deadlines
+  // Stats computed from full dataset, not from the display slice
+  const overdue = allAssignments.filter((a) => new Date(a.due_at) < now);
+  // "Due today" = due on today's calendar date and not yet past
+  const dueToday = allAssignments.filter((a) => {
+    const d = new Date(a.due_at);
+    return d.toDateString() === todayStr && d > now;
+  });
+  // "Upcoming" = future assignments (excludes overdue)
+  const upcomingCount = allAssignments.filter((a) => new Date(a.due_at) > now).length;
+  // Top 5 for the assignments preview list
+  const displayAssignments = allAssignments.slice(0, 5);
+
+  // Use local Central time date to avoid UTC off-by-one at day boundaries
+  const todayCentral = now.toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   const { data: academicDates } = await supabase
     .from("isu_academic_calendar")
     .select("title, event_date")
-    .gte("event_date", new Date().toISOString().split("T")[0])
+    .gte("event_date", todayCentral)
     .order("event_date")
     .limit(3);
 
@@ -117,7 +88,7 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
         <div className="bg-white rounded-2xl border border-gray-100 p-4">
           <p className="text-xs text-gray-400 mb-1">Upcoming</p>
-          <p className="text-2xl font-semibold text-gray-900">{assignments.length}</p>
+          <p className="text-2xl font-semibold text-gray-900">{upcomingCount}</p>
           <p className="text-xs text-gray-400 mt-0.5">assignments</p>
         </div>
         <div className={`rounded-2xl border p-4 ${dueToday.length > 0 ? "bg-orange-50 border-orange-100" : "bg-white border-gray-100"}`}>
@@ -133,12 +104,11 @@ export default async function DashboardPage() {
       </div>
 
       {/* Quick links */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+      <div className="grid grid-cols-3 gap-3 mb-8">
         {[
           { href: "/planning", label: "Academic Plan", icon: "📚" },
           { href: "/calendar", label: "Calendar", icon: "📅" },
           { href: "/events", label: "Campus Events", icon: "🎓" },
-          { href: "/dining", label: "Dining", icon: "🍽️" },
         ].map((item) => (
           <Link
             key={item.href}
@@ -158,7 +128,7 @@ export default async function DashboardPage() {
           <h2 className="text-sm font-semibold text-gray-900">Ask CyGuide</h2>
         </div>
         <Link href="/chat" className="flex items-center gap-3 w-full text-left rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-400 hover:border-red-200 hover:bg-red-50 transition-colors">
-          Ask about policies, courses, dining, or get support…
+          Ask about policies, courses, events, or get support…
         </Link>
       </div>
 
@@ -198,11 +168,11 @@ export default async function DashboardPage() {
               Connect Canvas
             </Link>
           </div>
-        ) : assignments.length === 0 ? (
+        ) : displayAssignments.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-6">No upcoming assignments — you&apos;re all caught up!</p>
         ) : (
           <div className="flex flex-col gap-2">
-            {assignments.map((a) => {
+            {displayAssignments.map((a) => {
               const { label, color } = urgencyLabel(a.due_at);
               return (
                 <div key={a.id} className="flex items-start justify-between gap-3 py-2.5 border-b border-gray-50 last:border-0">

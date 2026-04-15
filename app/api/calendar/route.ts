@@ -13,17 +13,20 @@ export async function GET() {
 
     if (!student) return NextResponse.json({ events: [], academic: [], assignments: [] });
 
-    const [{ data: events }, { data: academic }, { data: profile }] = await Promise.all([
+    // Query students (primary) and profiles (legacy fallback) in parallel
+    const [{ data: events }, { data: academic }, { data: studentRecord }, { data: profile }] = await Promise.all([
       supabase.from("calendar_events").select("*").eq("student_id", student.id).order("due_date"),
       supabase.from("isu_academic_calendar").select("*").order("event_date"),
+      supabase.from("students").select("canvas_ical_url").eq("user_id", user.id).single(),
       supabase.from("profiles").select("canvas_ical_url").eq("id", user.id).single(),
     ]);
 
     // Fetch Canvas assignments for the calendar (4 months ahead)
+    const icalUrl = studentRecord?.canvas_ical_url ?? profile?.canvas_ical_url;
     let assignments: ReturnType<typeof getUpcoming> = [];
-    if (profile?.canvas_ical_url) {
+    if (icalUrl) {
       try {
-        const res = await fetch(profile.canvas_ical_url, { next: { revalidate: 300 } });
+        const res = await fetch(icalUrl, { next: { revalidate: 300 } });
         if (res.ok) {
           const text = await res.text();
           assignments = getUpcoming(parseIcal(text), 120);

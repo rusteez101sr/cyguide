@@ -40,16 +40,17 @@ async function fetchAssignments(userId: string) {
   const { createClient: createServer } = await import("@/lib/supabase-server");
   const supabase = await createServer();
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("canvas_ical_url")
-    .eq("id", userId)
-    .single();
+  // Check students table first (primary store), fall back to legacy profiles table
+  const [{ data: student }, { data: profile }] = await Promise.all([
+    supabase.from("students").select("canvas_ical_url").eq("user_id", userId).single(),
+    supabase.from("profiles").select("canvas_ical_url").eq("id", userId).single(),
+  ]);
 
-  if (!profile?.canvas_ical_url) return { assignments: [], hasUrl: false };
+  const icalUrl = student?.canvas_ical_url ?? profile?.canvas_ical_url;
+  if (!icalUrl) return { assignments: [], hasUrl: false };
 
   try {
-    const res = await fetch(profile.canvas_ical_url, { next: { revalidate: 300 } });
+    const res = await fetch(icalUrl, { next: { revalidate: 300 } });
     if (!res.ok) return { assignments: [], hasUrl: true, error: "Could not fetch your Canvas calendar. Check the URL in Settings." };
 
     const text = await res.text();
