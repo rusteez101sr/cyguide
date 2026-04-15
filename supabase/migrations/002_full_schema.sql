@@ -23,6 +23,9 @@ create table if not exists public.students (
   on_campus boolean default false,
   meal_plan text default 'None',  -- None, Cyclone, Cardinal, Gold
   gpa text,
+  interests text,
+  internships text,
+  research text,
   canvas_ical_url text,
   onboarding_complete boolean default false,
   created_at timestamptz default now(),

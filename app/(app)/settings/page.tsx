@@ -1,28 +1,21 @@
 "use client";
 
 import { useState, useEffect, FormEvent } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase";
 
-interface StudentProfile {
+interface StudentSettingsProfile {
   name: string;
   net_id: string;
-  major: string;
   class_year: string;
-  gpa: string;
-  advisor_name: string;
-  advisor_email: string;
-  advisor_phone: string;
-  advisor_office: string;
   on_campus: boolean;
-  meal_plan: string;
   canvas_ical_url: string;
 }
 
 const YEAR_OPTIONS = ["Freshman", "Sophomore", "Junior", "Senior"];
-const MEAL_PLANS = ["None", "Cyclone", "Cardinal", "Gold"];
 
 const FIELD_CONFIGS: Array<{
-  key: keyof StudentProfile;
+  key: keyof StudentSettingsProfile;
   label: string;
   type: string;
   placeholder?: string;
@@ -30,24 +23,13 @@ const FIELD_CONFIGS: Array<{
 }> = [
   { key: "name", label: "Full Name", type: "text", placeholder: "Jane Smith" },
   { key: "net_id", label: "Net ID", type: "text", placeholder: "jsmith1" },
-  { key: "major", label: "Major", type: "text", placeholder: "Computer Science" },
   { key: "class_year", label: "Class Year", type: "select", options: YEAR_OPTIONS },
-  { key: "gpa", label: "GPA", type: "text", placeholder: "3.75" },
-  { key: "advisor_name", label: "Advisor Name", type: "text", placeholder: "Dr. Jane Doe" },
-  { key: "advisor_email", label: "Advisor Email", type: "email", placeholder: "jdoe@iastate.edu" },
-  { key: "advisor_phone", label: "Advisor Phone", type: "text", placeholder: "(515) 294-0000" },
-  { key: "advisor_office", label: "Advisor Office", type: "text", placeholder: "1234 Coover Hall" },
-  { key: "meal_plan", label: "Meal Plan", type: "select", options: MEAL_PLANS },
 ];
 
-// ─── Field component defined OUTSIDE SettingsPage ────────────────────────────
-// If this were defined inside SettingsPage, React would treat it as a brand-new
-// component type on every render (every keystroke), unmounting and remounting
-// the input — which is exactly what caused the one-char-then-lose-focus bug.
 interface FieldProps {
-  config: typeof FIELD_CONFIGS[0];
-  profile: StudentProfile;
-  onChange: (key: keyof StudentProfile, value: string) => void;
+  config: typeof FIELD_CONFIGS[number];
+  profile: StudentSettingsProfile;
+  onChange: (key: keyof StudentSettingsProfile, value: string) => void;
 }
 
 function Field({ config, profile, onChange }: FieldProps) {
@@ -64,7 +46,11 @@ function Field({ config, profile, onChange }: FieldProps) {
           className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
         >
           <option value="">Select…</option>
-          {config.options?.map((o) => <option key={o} value={o}>{o}</option>)}
+          {config.options?.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
         </select>
       </div>
     );
@@ -84,14 +70,14 @@ function Field({ config, profile, onChange }: FieldProps) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 export default function SettingsPage() {
-  const supabase = createClient();
-  const [profile, setProfile] = useState<StudentProfile>({
-    name: "", net_id: "", major: "", class_year: "", gpa: "",
-    advisor_name: "", advisor_email: "", advisor_phone: "", advisor_office: "",
-    on_campus: false, meal_plan: "None", canvas_ical_url: "",
+  const [supabase] = useState(() => createClient());
+  const [profile, setProfile] = useState<StudentSettingsProfile>({
+    name: "",
+    net_id: "",
+    class_year: "",
+    on_campus: false,
+    canvas_ical_url: "",
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -101,21 +87,15 @@ export default function SettingsPage() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch("/api/student");
+        const res = await fetch("/api/student", { cache: "no-store" });
         const data = await res.json();
+
         if (data.student) {
           setProfile({
             name: data.student.name ?? "",
             net_id: data.student.net_id ?? "",
-            major: data.student.major ?? "",
             class_year: data.student.class_year ?? "",
-            gpa: data.student.gpa ?? "",
-            advisor_name: data.student.advisor_name ?? "",
-            advisor_email: data.student.advisor_email ?? "",
-            advisor_phone: data.student.advisor_phone ?? "",
-            advisor_office: data.student.advisor_office ?? "",
             on_campus: data.student.on_campus ?? false,
-            meal_plan: data.student.meal_plan ?? "None",
             canvas_ical_url: data.student.canvas_ical_url ?? "",
           });
         } else {
@@ -123,37 +103,38 @@ export default function SettingsPage() {
           if (user) {
             const { data: legacyProfile } = await supabase
               .from("profiles")
-              .select("canvas_ical_url, major, year")
+              .select("canvas_ical_url, year")
               .eq("id", user.id)
               .single();
+
             if (legacyProfile) {
               setProfile((prev) => ({
                 ...prev,
                 canvas_ical_url: legacyProfile.canvas_ical_url ?? "",
-                major: legacyProfile.major ?? "",
                 class_year: legacyProfile.year ?? "",
               }));
             }
           }
         }
       } catch {
-        // ignore
+        // keep defaults
       }
+
       setLoading(false);
     }
-    load();
-  }, []);
 
-  // Stable field updater — avoids spreading stale closure values
-  function handleFieldChange(key: keyof StudentProfile, value: string) {
+    load();
+  }, [supabase]);
+
+  function handleFieldChange(key: keyof StudentSettingsProfile, value: string) {
     setProfile((prev) => ({ ...prev, [key]: value }));
   }
 
   async function save(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setError("");
     setSaved(false);
+    setError("");
 
     try {
       const res = await fetch("/api/student", {
@@ -162,15 +143,8 @@ export default function SettingsPage() {
         body: JSON.stringify({
           name: profile.name,
           net_id: profile.net_id,
-          major: profile.major,
           class_year: profile.class_year,
-          gpa: profile.gpa,
-          advisor_name: profile.advisor_name,
-          advisor_email: profile.advisor_email,
-          advisor_phone: profile.advisor_phone,
-          advisor_office: profile.advisor_office,
           on_campus: profile.on_campus,
-          meal_plan: profile.meal_plan,
           canvas_ical_url: profile.canvas_ical_url,
           onboarding_complete: true,
         }),
@@ -186,7 +160,6 @@ export default function SettingsPage() {
         await supabase.from("profiles").upsert({
           id: user.id,
           canvas_ical_url: profile.canvas_ical_url,
-          major: profile.major,
           year: profile.class_year,
         });
       }
@@ -212,15 +185,32 @@ export default function SettingsPage() {
     <div className="max-w-2xl mx-auto px-6 py-8 pb-24 md:pb-8">
       <div className="mb-8">
         <h1 className="text-2xl font-semibold text-gray-900">Settings</h1>
-        <p className="text-sm text-gray-500 mt-1">Manage your profile and Canvas integration.</p>
+        <p className="text-sm text-gray-500 mt-1">Manage your account basics and Canvas integration.</p>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-100 p-5 mb-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">Academic Planning Moved</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Advisor details, major, GPA, interests, internships, and research experience now live in Academic Planning.
+            </p>
+          </div>
+          <Link
+            href="/planning"
+            className="inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm text-white hover:opacity-90 transition-opacity"
+            style={{ backgroundColor: "#C8102E" }}
+          >
+            Open Planning
+          </Link>
+        </div>
       </div>
 
       <form onSubmit={save} className="flex flex-col gap-6">
-        {/* Student Profile */}
         <div className="bg-white rounded-2xl border border-gray-100 p-5">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">Student Profile</h2>
+          <h2 className="text-sm font-semibold text-gray-900 mb-4">Student Basics</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {FIELD_CONFIGS.slice(0, 5).map((config) => (
+            {FIELD_CONFIGS.map((config) => (
               <Field key={config.key} config={config} profile={profile} onChange={handleFieldChange} />
             ))}
           </div>
@@ -236,28 +226,18 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Advisor Info */}
         <div className="bg-white rounded-2xl border border-gray-100 p-5">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">Academic Advisor</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {FIELD_CONFIGS.slice(5, 9).map((config) => (
-              <Field key={config.key} config={config} profile={profile} onChange={handleFieldChange} />
-            ))}
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900 mb-1">Canvas Calendar</h2>
+              <p className="text-xs text-gray-400">
+                Canvas → Calendar → Calendar Feed. Paste that feed URL here to sync assignment due dates into Calendar.
+              </p>
+            </div>
+            <span className={`shrink-0 text-[10px] font-semibold px-2 py-1 rounded-full ${profile.canvas_ical_url ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+              {profile.canvas_ical_url ? "Connected" : "Not connected"}
+            </span>
           </div>
-        </div>
-
-        {/* Dining */}
-        <div className="bg-white rounded-2xl border border-gray-100 p-5">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">Meal Plan</h2>
-          <Field config={FIELD_CONFIGS[9]} profile={profile} onChange={handleFieldChange} />
-        </div>
-
-        {/* Canvas iCal */}
-        <div className="bg-white rounded-2xl border border-gray-100 p-5">
-          <h2 className="text-sm font-semibold text-gray-900 mb-1">Canvas Calendar</h2>
-          <p className="text-xs text-gray-400 mb-4">
-            To find your URL: Canvas → Calendar → Calendar Feed (bottom right).
-          </p>
           <input
             type="url"
             value={profile.canvas_ical_url}

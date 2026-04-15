@@ -133,12 +133,11 @@ export default async function DashboardPage() {
       </div>
 
       {/* Quick links */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
         {[
           { href: "/planning", label: "Academic Plan", icon: "📚" },
           { href: "/calendar", label: "Calendar", icon: "📅" },
           { href: "/events", label: "Campus Events", icon: "🎓" },
-          { href: "/dining", label: "Dining", icon: "🍽️" },
         ].map((item) => (
           <Link
             key={item.href}
@@ -158,7 +157,7 @@ export default async function DashboardPage() {
           <h2 className="text-sm font-semibold text-gray-900">Ask CyGuide</h2>
         </div>
         <Link href="/chat" className="flex items-center gap-3 w-full text-left rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-400 hover:border-red-200 hover:bg-red-50 transition-colors">
-          Ask about policies, courses, dining, or get support…
+          Ask about policies, courses, deadlines, or get support…
         </Link>
       </div>
 

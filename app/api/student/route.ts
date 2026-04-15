@@ -58,8 +58,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { courses, ...studentData } = body;
 
-    // Try students table first
-    const { data: student, error: studentErr } = await supabase
+    // Try students table first (with all fields including new planning fields)
+    let { data: student, error: studentErr } = await supabase
       .from("students")
       .upsert(
         { ...studentData, user_id: user.id, updated_at: new Date().toISOString() },
@@ -67,6 +67,22 @@ export async function POST(req: NextRequest) {
       )
       .select()
       .single();
+
+    // If new columns don't exist yet, retry without them
+    if (studentErr && studentErr.message?.includes("column")) {
+      const { interests, internships, research, ...coreData } = studentData;
+      void interests; void internships; void research;
+      const retry = await supabase
+        .from("students")
+        .upsert(
+          { ...coreData, user_id: user.id, updated_at: new Date().toISOString() },
+          { onConflict: "user_id" }
+        )
+        .select()
+        .single();
+      student = retry.data;
+      studentErr = retry.error;
+    }
 
     if (studentErr) {
       // students table doesn't exist yet — fall back to profiles table
