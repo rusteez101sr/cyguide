@@ -40,6 +40,52 @@ const FIELD_CONFIGS: Array<{
   { key: "meal_plan", label: "Meal Plan", type: "select", options: MEAL_PLANS },
 ];
 
+// ─── Field component defined OUTSIDE SettingsPage ────────────────────────────
+// If this were defined inside SettingsPage, React would treat it as a brand-new
+// component type on every render (every keystroke), unmounting and remounting
+// the input — which is exactly what caused the one-char-then-lose-focus bug.
+interface FieldProps {
+  config: typeof FIELD_CONFIGS[0];
+  profile: StudentProfile;
+  onChange: (key: keyof StudentProfile, value: string) => void;
+}
+
+function Field({ config, profile, onChange }: FieldProps) {
+  const value = profile[config.key];
+  const strValue = typeof value === "boolean" ? "" : (value ?? "");
+
+  if (config.type === "select") {
+    return (
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1.5">{config.label}</label>
+        <select
+          value={strValue}
+          onChange={(e) => onChange(config.key, e.target.value)}
+          className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
+        >
+          <option value="">Select…</option>
+          {config.options?.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1.5">{config.label}</label>
+      <input
+        type={config.type}
+        value={strValue}
+        onChange={(e) => onChange(config.key, e.target.value)}
+        placeholder={config.placeholder}
+        className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
+      />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function SettingsPage() {
   const supabase = createClient();
   const [profile, setProfile] = useState<StudentProfile>({
@@ -73,7 +119,6 @@ export default function SettingsPage() {
             canvas_ical_url: data.student.canvas_ical_url ?? "",
           });
         } else {
-          // Fall back to legacy profiles table
           const { data: { user } } = await supabase.auth.getUser();
           if (user) {
             const { data: legacyProfile } = await supabase
@@ -98,6 +143,11 @@ export default function SettingsPage() {
     }
     load();
   }, []);
+
+  // Stable field updater — avoids spreading stale closure values
+  function handleFieldChange(key: keyof StudentProfile, value: string) {
+    setProfile((prev) => ({ ...prev, [key]: value }));
+  }
 
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -131,7 +181,6 @@ export default function SettingsPage() {
         throw new Error(data.error ?? "Save failed");
       }
 
-      // Also update legacy profiles table for Canvas iCal compatibility
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         await supabase.from("profiles").upsert({
@@ -159,40 +208,6 @@ export default function SettingsPage() {
     );
   }
 
-  function Field({ config }: { config: typeof FIELD_CONFIGS[0] }) {
-    const value = profile[config.key];
-    const strValue = typeof value === "boolean" ? "" : (value ?? "");
-
-    if (config.type === "select") {
-      return (
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1.5">{config.label}</label>
-          <select
-            value={strValue}
-            onChange={(e) => setProfile({ ...profile, [config.key]: e.target.value })}
-            className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
-          >
-            <option value="">Select…</option>
-            {config.options?.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-        </div>
-      );
-    }
-
-    return (
-      <div>
-        <label className="block text-xs font-medium text-gray-600 mb-1.5">{config.label}</label>
-        <input
-          type={config.type}
-          value={strValue}
-          onChange={(e) => setProfile({ ...profile, [config.key]: e.target.value })}
-          placeholder={config.placeholder}
-          className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-2xl mx-auto px-6 py-8 pb-24 md:pb-8">
       <div className="mb-8">
@@ -206,7 +221,7 @@ export default function SettingsPage() {
           <h2 className="text-sm font-semibold text-gray-900 mb-4">Student Profile</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {FIELD_CONFIGS.slice(0, 5).map((config) => (
-              <Field key={config.key} config={config} />
+              <Field key={config.key} config={config} profile={profile} onChange={handleFieldChange} />
             ))}
           </div>
           <div className="mt-3 flex items-center gap-3">
@@ -214,7 +229,7 @@ export default function SettingsPage() {
               type="checkbox"
               id="on_campus"
               checked={profile.on_campus}
-              onChange={(e) => setProfile({ ...profile, on_campus: e.target.checked })}
+              onChange={(e) => setProfile((prev) => ({ ...prev, on_campus: e.target.checked }))}
               className="w-4 h-4 rounded accent-red-600"
             />
             <label htmlFor="on_campus" className="text-sm text-gray-700">Living on campus</label>
@@ -226,7 +241,7 @@ export default function SettingsPage() {
           <h2 className="text-sm font-semibold text-gray-900 mb-4">Academic Advisor</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {FIELD_CONFIGS.slice(5, 9).map((config) => (
-              <Field key={config.key} config={config} />
+              <Field key={config.key} config={config} profile={profile} onChange={handleFieldChange} />
             ))}
           </div>
         </div>
@@ -234,7 +249,7 @@ export default function SettingsPage() {
         {/* Dining */}
         <div className="bg-white rounded-2xl border border-gray-100 p-5">
           <h2 className="text-sm font-semibold text-gray-900 mb-4">Meal Plan</h2>
-          <Field config={FIELD_CONFIGS[9]} />
+          <Field config={FIELD_CONFIGS[9]} profile={profile} onChange={handleFieldChange} />
         </div>
 
         {/* Canvas iCal */}
@@ -246,7 +261,7 @@ export default function SettingsPage() {
           <input
             type="url"
             value={profile.canvas_ical_url}
-            onChange={(e) => setProfile({ ...profile, canvas_ical_url: e.target.value })}
+            onChange={(e) => setProfile((prev) => ({ ...prev, canvas_ical_url: e.target.value }))}
             className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100 transition-colors"
             placeholder="https://canvas.iastate.edu/feeds/calendars/user_xxxx.ics"
           />
