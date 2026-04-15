@@ -110,10 +110,8 @@ function ChatContent() {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
-  // Uncontrolled: only tracks whether button should be enabled
-  const [hasText, setHasText] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  // Uncontrolled textarea — React never writes value, so focus is never stolen
+  // Uncontrolled textarea — no value prop, no state updates while typing
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -124,8 +122,6 @@ function ChatContent() {
   useEffect(() => {
     if (initialQ) {
       const decoded = decodeURIComponent(initialQ);
-      if (inputRef.current) inputRef.current.value = decoded;
-      setHasText(decoded.trim().length > 0);
       setTimeout(() => send(decoded), 100);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -134,12 +130,11 @@ function ChatContent() {
     const trimmed = (text ?? inputRef.current?.value ?? "").trim();
     if (!trimmed || loading) return;
 
-    // Clear textarea immediately
+    // Clear textarea immediately (direct DOM, no state)
     if (inputRef.current) {
       inputRef.current.value = "";
       inputRef.current.style.height = "auto";
     }
-    setHasText(false);
 
     const userMsg: Message = { role: "user", content: trimmed };
     const nextMessages = [...messages, userMsg];
@@ -287,7 +282,7 @@ function ChatContent() {
             ref={inputRef}
             rows={1}
             onChange={(e) => {
-              setHasText(e.target.value.trim().length > 0);
+              // Direct DOM height adjustment — no setState, no re-render, no focus loss
               e.target.style.height = "auto";
               e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
             }}
@@ -302,7 +297,7 @@ function ChatContent() {
           />
           <button
             type="submit"
-            disabled={!hasText || loading}
+            disabled={loading}
             className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-white transition-opacity disabled:opacity-40"
             style={{ backgroundColor: "#C8102E" }}
             aria-label="Send"
