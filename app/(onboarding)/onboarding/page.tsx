@@ -87,7 +87,7 @@ export default function OnboardingPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const suggestTimer = useRef<ReturnType<typeof setTimeout>>();
+  const suggestTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     setMessages([{ from: "bot", text: getBotQuestion("name", {}) }]);
