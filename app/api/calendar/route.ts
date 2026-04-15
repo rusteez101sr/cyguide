@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase-server";
+import { parseIcal, getUpcoming } from "@/lib/ical";
 
 export async function GET() {
   try {
@@ -10,14 +11,27 @@ export async function GET() {
     const { data: student } = await supabase
       .from("students").select("id").eq("user_id", user.id).single();
 
-    if (!student) return NextResponse.json({ events: [], academic: [] });
+    if (!student) return NextResponse.json({ events: [], academic: [], assignments: [] });
 
-    const [{ data: events }, { data: academic }] = await Promise.all([
+    const [{ data: events }, { data: academic }, { data: profile }] = await Promise.all([
       supabase.from("calendar_events").select("*").eq("student_id", student.id).order("due_date"),
       supabase.from("isu_academic_calendar").select("*").order("event_date"),
+      supabase.from("profiles").select("canvas_ical_url").eq("id", user.id).single(),
     ]);
 
-    return NextResponse.json({ events: events ?? [], academic: academic ?? [] });
+    // Fetch Canvas assignments for the calendar (4 months ahead)
+    let assignments: ReturnType<typeof getUpcoming> = [];
+    if (profile?.canvas_ical_url) {
+      try {
+        const res = await fetch(profile.canvas_ical_url, { next: { revalidate: 300 } });
+        if (res.ok) {
+          const text = await res.text();
+          assignments = getUpcoming(parseIcal(text), 120);
+        }
+      } catch {}
+    }
+
+    return NextResponse.json({ events: events ?? [], academic: academic ?? [], assignments });
   } catch {
     return NextResponse.json({ error: "Failed to fetch events" }, { status: 500 });
   }

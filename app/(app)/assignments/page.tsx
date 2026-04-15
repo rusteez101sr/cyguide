@@ -20,12 +20,10 @@ function formatGroupDate(iso: string) {
 }
 
 function urgencyColor(dueAt: string) {
-  const diff = new Date(dueAt).getTime() - Date.now();
-  const days = diff / (1000 * 60 * 60 * 24);
-  if (diff < 0) return "bg-red-500";
-  if (days < 1) return "bg-orange-500";
-  if (days < 3) return "bg-amber-400";
-  return "bg-gray-300";
+  const days = (new Date(dueAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+  if (days <= 3) return "bg-red-500";    // overdue or ≤ 3 days
+  if (days <= 5) return "bg-yellow-400"; // 3–5 days
+  return "bg-green-500";                 // > 5 days
 }
 
 function groupByDay(assignments: Assignment[]) {
