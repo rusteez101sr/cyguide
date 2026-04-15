@@ -38,7 +38,7 @@ async function getStudentProfile(userId: string): Promise<StudentProfile> {
       .from("student_courses")
       .select("course_code, course_name, professor_name, professor_email, professor_office, professor_office_hours, grade, credits, semester")
       .eq("student_id", student.id);
-    courseData = retry.data;
+    courseData = retry.data as typeof courseData;
   }
 
   const courses: CourseInfo[] = courseData ?? [];
