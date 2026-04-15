@@ -20,12 +20,10 @@ function formatGroupDate(iso: string) {
 }
 
 function urgencyColor(dueAt: string) {
-  const diff = new Date(dueAt).getTime() - Date.now();
-  const days = diff / (1000 * 60 * 60 * 24);
-  if (diff < 0) return "bg-red-500";
-  if (days < 1) return "bg-orange-500";
-  if (days < 3) return "bg-amber-400";
-  return "bg-gray-300";
+  const days = (new Date(dueAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+  if (days <= 3) return "bg-red-500";    // overdue or ≤ 3 days
+  if (days <= 5) return "bg-yellow-400"; // 3–5 days
+  return "bg-green-500";                 // > 5 days
 }
 
 function groupByDay(assignments: Assignment[]) {
@@ -42,16 +40,17 @@ async function fetchAssignments(userId: string) {
   const { createClient: createServer } = await import("@/lib/supabase-server");
   const supabase = await createServer();
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("canvas_ical_url")
-    .eq("id", userId)
-    .single();
+  // Check students table first (primary store), fall back to legacy profiles table
+  const [{ data: student }, { data: profile }] = await Promise.all([
+    supabase.from("students").select("canvas_ical_url").eq("user_id", userId).single(),
+    supabase.from("profiles").select("canvas_ical_url").eq("id", userId).single(),
+  ]);
 
-  if (!profile?.canvas_ical_url) return { assignments: [], hasUrl: false };
+  const icalUrl = student?.canvas_ical_url ?? profile?.canvas_ical_url;
+  if (!icalUrl) return { assignments: [], hasUrl: false };
 
   try {
-    const res = await fetch(profile.canvas_ical_url, { next: { revalidate: 300 } });
+    const res = await fetch(icalUrl, { next: { revalidate: 300 } });
     if (!res.ok) return { assignments: [], hasUrl: true, error: "Could not fetch your Canvas calendar. Check the URL in Settings." };
 
     const text = await res.text();

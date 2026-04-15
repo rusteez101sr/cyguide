@@ -6,6 +6,24 @@ export interface Assignment {
   url: string;
 }
 
+// Canvas iCal URLs point to the calendar event page, e.g.:
+// https://canvas.iastate.edu/calendar?event_id=assignment_12345&include_contexts=course_678
+// Transform these into the direct assignment URL:
+// https://canvas.iastate.edu/courses/678/assignments/12345
+function resolveAssignmentUrl(rawUrl: string): string {
+  try {
+    const u = new URL(rawUrl);
+    const eventId = u.searchParams.get("event_id");
+    const context = u.searchParams.get("include_contexts");
+    if (eventId?.startsWith("assignment_") && context?.startsWith("course_")) {
+      const assignmentId = eventId.slice("assignment_".length);
+      const courseId = context.slice("course_".length);
+      return `${u.origin}/courses/${courseId}/assignments/${assignmentId}`;
+    }
+  } catch {}
+  return rawUrl;
+}
+
 export function parseIcal(text: string): Assignment[] {
   const events: Assignment[] = [];
   const blocks = text.split("BEGIN:VEVENT");
@@ -39,7 +57,7 @@ export function parseIcal(text: string): Assignment[] {
     const course_name = courseMatch ? courseMatch[1] : "";
     const name = summary.replace(/\s*\([^)]+\)\s*$/, "").trim();
 
-    events.push({ id: uid, name, due_at: due.toISOString(), course_name, url });
+    events.push({ id: uid, name, due_at: due.toISOString(), course_name, url: resolveAssignmentUrl(url) });
   }
 
   return events;
