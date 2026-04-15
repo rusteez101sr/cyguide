@@ -26,14 +26,12 @@ export async function GET() {
       canvasUrl = profile?.canvas_ical_url;
     }
 
-    const promises: Promise<unknown>[] = [
+    const [eventsResult, academicResult] = await Promise.all([
       student
         ? supabase.from("calendar_events").select("*").eq("student_id", student.id).order("due_date")
-        : Promise.resolve({ data: [] }),
+        : Promise.resolve({ data: [] as unknown[] }),
       supabase.from("isu_academic_calendar").select("*").order("event_date"),
-    ];
-
-    const [eventsResult, academicResult] = await Promise.all(promises) as [
+    ]) as [
       { data: unknown[] | null },
       { data: unknown[] | null }
     ];
