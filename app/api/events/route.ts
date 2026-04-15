@@ -183,7 +183,7 @@ function parseOfficialCalendarHtml(html: string): CampusEvent[] {
       category,
       url,
     } satisfies CampusEvent;
-  }).filter((event): event is CampusEvent => Boolean(event));
+  }).filter((event): event is CampusEvent => event !== null);
 }
 
 async function fetchOfficialISUEvents(): Promise<CampusEvent[]> {
@@ -258,7 +258,7 @@ async function searchGoogleISUEvents(category: EventsCategory): Promise<CampusEv
           url: result.link,
         } satisfies CampusEvent;
       })
-      .filter((event): event is CampusEvent => Boolean(event));
+      .filter((event): event is CampusEvent => event !== null);
   } catch {
     return [];
   }
